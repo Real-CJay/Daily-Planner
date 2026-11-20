@@ -9,8 +9,9 @@ import { CalendarPage } from '@/pages/CalendarPage';
 import { AnalyticsPage } from '@/pages/AnalyticsPage';
 import { PersonalBestsPage } from '@/pages/PersonalBestsPage';
 import { TrainingPlanPage } from '@/pages/TrainingPlanPage';
+import { CoachPage } from '@/pages/CoachPage';
+import { WeeklyReviewPage } from '@/pages/WeeklyReviewPage';
 import { SettingsPage } from '@/pages/SettingsPage';
-import { StagePlaceholderPage } from '@/pages/StagePlaceholderPage';
 
 function AuthenticatedWorkspace() {
   const { user, loading } = useAuth();
@@ -37,28 +38,8 @@ function AuthenticatedWorkspace() {
         <Route path="/analytics" element={<AnalyticsPage />} />
         <Route path="/personal-bests" element={<PersonalBestsPage />} />
         <Route path="/plan" element={<TrainingPlanPage />} />
-        <Route
-          path="/coach"
-          element={
-            <StagePlaceholderPage
-              title="AI Running Coach"
-              subtitle="Context-aware coaching grounded in recorded Supabase data."
-              stageLabel="Stage 7"
-              summary="Persistent conversational coaching using compact verified context and server-side Gemini calls will be implemented in Stage 7."
-            />
-          }
-        />
-        <Route
-          path="/weekly-review"
-          element={
-            <StagePlaceholderPage
-              title="Weekly Training Review"
-              subtitle="Monday-to-Sunday summary in Asia/Colombo time."
-              stageLabel="Stage 7"
-              summary="Deterministic weekly summaries paired with optional cached Gemini narrative reviews will be implemented in Stage 7."
-            />
-          }
-        />
+        <Route path="/coach" element={<CoachPage />} />
+        <Route path="/weekly-review" element={<WeeklyReviewPage />} />
         <Route path="/settings" element={<SettingsPage />} />
         <Route path="*" element={<Navigate to="/" replace />} />
       </Routes>

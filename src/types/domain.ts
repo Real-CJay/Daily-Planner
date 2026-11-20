@@ -319,3 +319,46 @@ export interface PlanAdjustmentDraft {
   proposed_summary: string;
   decision: PlanAdjustmentDecision;
 }
+
+export type CoachMessageRole = 'user' | 'assistant';
+
+export interface CoachMessage {
+  id: string;
+  user_id: string;
+  role: CoachMessageRole;
+  content: string;
+  model_used: string | null;
+  context_snapshot: Record<string, unknown> | null;
+  data_origin: 'RECORDED' | 'SUGGESTED';
+  created_at: string;
+}
+
+export interface CoachMessageDraft {
+  role: CoachMessageRole;
+  content: string;
+  model_used: string | null;
+  context_snapshot: Record<string, unknown> | null;
+  data_origin: 'RECORDED' | 'SUGGESTED';
+}
+
+export interface WeeklyReviewRecord {
+  id: string;
+  user_id: string;
+  week_start: string; // YYYY-MM-DD (Monday)
+  week_end: string; // YYYY-MM-DD (Sunday)
+  summary_snapshot: Record<string, unknown>;
+  ai_narrative: string | null;
+  ai_model: string | null;
+  user_reflection: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface WeeklyReviewDraft {
+  week_start: string;
+  week_end: string;
+  summary_snapshot: Record<string, unknown>;
+  ai_narrative: string | null;
+  ai_model: string | null;
+  user_reflection: string | null;
+}
