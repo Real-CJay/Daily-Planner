@@ -8,6 +8,7 @@ import { RunDetailPage } from '@/pages/RunDetailPage';
 import { CalendarPage } from '@/pages/CalendarPage';
 import { AnalyticsPage } from '@/pages/AnalyticsPage';
 import { PersonalBestsPage } from '@/pages/PersonalBestsPage';
+import { TrainingPlanPage } from '@/pages/TrainingPlanPage';
 import { SettingsPage } from '@/pages/SettingsPage';
 import { StagePlaceholderPage } from '@/pages/StagePlaceholderPage';
 
@@ -35,17 +36,7 @@ function AuthenticatedWorkspace() {
         <Route path="/calendar" element={<CalendarPage />} />
         <Route path="/analytics" element={<AnalyticsPage />} />
         <Route path="/personal-bests" element={<PersonalBestsPage />} />
-        <Route
-          path="/plan"
-          element={
-            <StagePlaceholderPage
-              title="Training Plan"
-              subtitle="Rolling 7-day plan and adaptive Next Run recommendations."
-              stageLabel="Stage 6"
-              summary="The three-part adaptive training engine, evidence-based phases, and non-silent plan adjustments will be implemented in Stage 6."
-            />
-          }
-        />
+        <Route path="/plan" element={<TrainingPlanPage />} />
         <Route
           path="/coach"
           element={

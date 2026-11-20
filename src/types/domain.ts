@@ -258,3 +258,64 @@ export interface PersonalBestDraft {
   session_id: string | null;
   notes: string | null;
 }
+
+export type PlannedWorkoutStatus = 'PLANNED' | 'COMPLETED' | 'SKIPPED' | 'ADJUSTED';
+
+export interface PlannedWorkout {
+  id: string;
+  user_id: string;
+  plan_date: string; // YYYY-MM-DD
+  workout_type: WorkoutType;
+  title: string;
+  target_distance_m: number;
+  target_duration_s: number | null;
+  target_pace_min_s: number | null; // faster bound (sec/km)
+  target_pace_max_s: number | null; // slower bound (sec/km)
+  target_rpe_range: string | null;
+  phase: TrainingPhase;
+  rationale: string;
+  status: PlannedWorkoutStatus;
+  linked_session_id: string | null;
+  data_origin: 'PLANNED' | 'SUGGESTED';
+  created_at: string;
+  updated_at: string;
+}
+
+export interface PlannedWorkoutDraft {
+  plan_date: string;
+  workout_type: WorkoutType;
+  title: string;
+  target_distance_m: number;
+  target_duration_s: number | null;
+  target_pace_min_s: number | null;
+  target_pace_max_s: number | null;
+  target_rpe_range: string | null;
+  phase: TrainingPhase;
+  rationale: string;
+  status: PlannedWorkoutStatus;
+  linked_session_id: string | null;
+  data_origin: 'PLANNED' | 'SUGGESTED';
+}
+
+export type PlanAdjustmentDecision = 'ACCEPTED' | 'DISMISSED';
+
+export interface PlanAdjustment {
+  id: string;
+  user_id: string;
+  adjustment_date: string; // YYYY-MM-DD
+  trigger_code: string;
+  trigger_reason: string;
+  previous_summary: string;
+  proposed_summary: string;
+  decision: PlanAdjustmentDecision;
+  created_at: string;
+}
+
+export interface PlanAdjustmentDraft {
+  adjustment_date: string;
+  trigger_code: string;
+  trigger_reason: string;
+  previous_summary: string;
+  proposed_summary: string;
+  decision: PlanAdjustmentDecision;
+}
