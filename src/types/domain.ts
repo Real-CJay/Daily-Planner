@@ -21,6 +21,16 @@ export type ActivityCategory =
   | 'UNIVERSITY'
   | 'CUSTOM';
 
+export const ACTIVITY_CATEGORY_LABELS: Record<ActivityCategory, string> = {
+  RUNNING: 'Running',
+  KARATE: 'Karate',
+  RECOVERY: 'Rest & Recovery',
+  VOCAL: 'Vocal Practice',
+  DRUMMING: 'Drumming',
+  UNIVERSITY: 'University',
+  CUSTOM: 'Custom',
+};
+
 export interface UserProfile {
   user_id: string;
   display_name: string | null;
@@ -48,3 +58,168 @@ export const TRAINING_PHASE_LABELS: Record<TrainingPhase, string> = {
   PERFORMANCE_DEVELOPMENT: 'Phase 3 — Performance Development',
   GOAL_SPECIFIC_5K: 'Phase 4 — Goal-Specific 5K Training',
 };
+
+export type WorkoutType =
+  | 'EASY'
+  | 'RECOVERY'
+  | 'LONG'
+  | 'TEMPO'
+  | 'INTERVALS'
+  | 'PROGRESSION'
+  | 'TIME_TRIAL'
+  | 'RACE'
+  | 'TREADMILL'
+  | 'RUN_WALK'
+  | 'OTHER';
+
+export const WORKOUT_TYPE_LABELS: Record<WorkoutType, string> = {
+  EASY: 'Easy',
+  RECOVERY: 'Recovery',
+  LONG: 'Long',
+  TEMPO: 'Tempo',
+  INTERVALS: 'Intervals',
+  PROGRESSION: 'Progression',
+  TIME_TRIAL: 'Time Trial',
+  RACE: 'Race',
+  TREADMILL: 'Treadmill',
+  RUN_WALK: 'Run / Walk',
+  OTHER: 'Other',
+};
+
+export type EntryMethod = 'MANUAL' | 'SCREENSHOT' | 'HISTORICAL_IMPORT';
+
+export interface RunningSplit {
+  id: string;
+  user_id: string;
+  session_id: string;
+  split_index: number;
+  distance_m: number;
+  duration_s: number;
+  is_partial: boolean;
+  avg_hr_bpm: number | null;
+  data_origin: 'RECORDED';
+  created_at: string;
+}
+
+export interface RunningSession {
+  id: string;
+  user_id: string;
+  session_date: string; // YYYY-MM-DD
+  start_time: string | null;
+  distance_m: number;
+  duration_s: number;
+  workout_type: WorkoutType;
+  is_indoor: boolean;
+  avg_hr_bpm: number | null;
+  max_hr_bpm: number | null;
+  cadence_spm: number | null;
+  elevation_gain_m: number | null;
+  rpe: number | null;
+  energy_level: number | null;
+  muscle_soreness: number | null;
+  pain_present: boolean;
+  pain_details: string | null;
+  conditions: string | null;
+  notes: string | null;
+  data_origin: 'RECORDED';
+  entry_method: EntryMethod;
+  is_historical_record: boolean;
+  created_at: string;
+  updated_at: string;
+  splits?: RunningSplit[];
+}
+
+export interface SplitDraft {
+  split_index: number;
+  distance_m: number;
+  duration_s: number;
+  is_partial: boolean;
+  avg_hr_bpm: number | null;
+}
+
+export interface RunningSessionDraft {
+  session_date: string;
+  start_time: string | null;
+  distance_m: number;
+  duration_s: number;
+  workout_type: WorkoutType;
+  is_indoor: boolean;
+  avg_hr_bpm: number | null;
+  max_hr_bpm: number | null;
+  cadence_spm: number | null;
+  elevation_gain_m: number | null;
+  rpe: number | null;
+  energy_level: number | null;
+  muscle_soreness: number | null;
+  pain_present: boolean;
+  pain_details: string | null;
+  conditions: string | null;
+  notes: string | null;
+  entry_method?: EntryMethod;
+  is_historical_record?: boolean;
+  splits: SplitDraft[];
+}
+
+export type ScheduleStatus = 'PLANNED' | 'COMPLETED' | 'SKIPPED' | 'RESCHEDULED';
+export type PhysicalLoadLevel = 'NONE' | 'LOW' | 'MODERATE' | 'HIGH';
+
+export interface ScheduleBlock {
+  id: string;
+  user_id: string;
+  title: string;
+  category: ActivityCategory;
+  block_date: string; // YYYY-MM-DD (anchor date if recurring)
+  start_time: string | null; // HH:MM
+  end_time: string | null; // HH:MM
+  duration_min: number | null;
+  is_recurring: boolean;
+  recurrence_days: number[]; // ISO weekday 1=Mon .. 7=Sun
+  status: ScheduleStatus;
+  physical_load: PhysicalLoadLevel;
+  notes: string | null;
+  data_origin: 'PLANNED' | 'RECORDED';
+  created_at: string;
+}
+
+export interface ScheduleBlockDraft {
+  title: string;
+  category: ActivityCategory;
+  block_date: string;
+  start_time: string | null;
+  end_time: string | null;
+  duration_min: number | null;
+  is_recurring: boolean;
+  recurrence_days: number[];
+  status: ScheduleStatus;
+  physical_load: PhysicalLoadLevel;
+  notes: string | null;
+}
+
+export interface ReadinessCheckIn {
+  id: string;
+  user_id: string;
+  checkin_date: string; // YYYY-MM-DD
+  sleep_hours: number | null;
+  sleep_quality: number | null; // 1-5
+  energy_level: number | null; // 1-5
+  muscle_soreness: number | null; // 1-5 (1 = none, 5 = severe)
+  stress_level: number | null; // 1-5 (1 = low, 5 = high)
+  resting_hr_bpm: number | null;
+  pain_present: boolean;
+  pain_details: string | null;
+  notes: string | null;
+  created_at: string;
+}
+
+export interface ReadinessCheckInDraft {
+  checkin_date: string;
+  sleep_hours: number | null;
+  sleep_quality: number | null;
+  energy_level: number | null;
+  muscle_soreness: number | null;
+  stress_level: number | null;
+  resting_hr_bpm: number | null;
+  pain_present: boolean;
+  pain_details: string | null;
+  notes: string | null;
+}

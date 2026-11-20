@@ -3,6 +3,9 @@ import { AuthProvider, useAuth } from '@/modules/auth/AuthContext';
 import { AuthPage } from '@/modules/auth/AuthPage';
 import { AppShell } from '@/components/layout/AppShell';
 import { OverviewPage } from '@/pages/OverviewPage';
+import { RunningLogPage } from '@/pages/RunningLogPage';
+import { RunDetailPage } from '@/pages/RunDetailPage';
+import { CalendarPage } from '@/pages/CalendarPage';
 import { SettingsPage } from '@/pages/SettingsPage';
 import { StagePlaceholderPage } from '@/pages/StagePlaceholderPage';
 
@@ -25,17 +28,9 @@ function AuthenticatedWorkspace() {
     <AppShell>
       <Routes>
         <Route path="/" element={<OverviewPage />} />
-        <Route
-          path="/runs"
-          element={
-            <StagePlaceholderPage
-              title="Running Log"
-              subtitle="Manual entry, screenshot imports, splits, and searchable running history."
-              stageLabel="Stage 2 & Stage 3"
-              summary="Manual running entry, deterministic pace math, historical August 2026 baseline import, and run detail pages will be implemented in Stage 2; Gemini screenshot extraction follows in Stage 3."
-            />
-          }
-        />
+        <Route path="/runs" element={<RunningLogPage />} />
+        <Route path="/runs/:id" element={<RunDetailPage />} />
+        <Route path="/calendar" element={<CalendarPage />} />
         <Route
           path="/plan"
           element={
@@ -44,17 +39,6 @@ function AuthenticatedWorkspace() {
               subtitle="Rolling 7-day plan and adaptive Next Run recommendations."
               stageLabel="Stage 6"
               summary="The three-part adaptive training engine, evidence-based phases, and non-silent plan adjustments will be implemented in Stage 6."
-            />
-          }
-        />
-        <Route
-          path="/calendar"
-          element={
-            <StagePlaceholderPage
-              title="Unified Training Calendar"
-              subtitle="Running, karate, rest days, vocal practice, drumming, and university commitments."
-              stageLabel="Stage 4"
-              summary="Monthly, weekly, and agenda calendar views with category filters, recurring schedules, readiness check-ins, and rest-day tracking will be implemented in Stage 4."
             />
           }
         />

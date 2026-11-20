@@ -1,169 +1,250 @@
 import { useState, type ReactNode } from 'react';
-import { NavLink } from 'react-router-dom';
+import { NavLink, useLocation } from 'react-router-dom';
 import {
   Activity,
+  Award,
   BarChart3,
   Bot,
-  Calendar,
-  ClipboardList,
-  Compass,
-  FileText,
+  CalendarDays,
+  ClipboardCheck,
   LayoutDashboard,
   LogOut,
   Menu,
+  Route,
   Settings,
-  Trophy,
   X,
 } from 'lucide-react';
 import { useAuth } from '@/modules/auth/AuthContext';
+import { TRAINING_PHASE_LABELS } from '@/types/domain';
 
-export const NAV_ITEMS = [
-  { to: '/', label: 'Overview', icon: LayoutDashboard, mobilePrimary: true },
-  { to: '/runs', label: 'Running Log', icon: ClipboardList, mobilePrimary: true },
-  { to: '/plan', label: 'Training Plan', icon: Compass, mobilePrimary: true },
-  { to: '/calendar', label: 'Calendar', icon: Calendar, mobilePrimary: true },
-  { to: '/analytics', label: 'Analytics', icon: BarChart3, mobilePrimary: false },
-  { to: '/coach', label: 'AI Coach', icon: Bot, mobilePrimary: false },
-  { to: '/personal-bests', label: 'Personal Bests', icon: Trophy, mobilePrimary: false },
-  { to: '/weekly-review', label: 'Weekly Review', icon: FileText, mobilePrimary: false },
-  { to: '/settings', label: 'Settings', icon: Settings, mobilePrimary: false },
-] as const;
+export interface NavItem {
+  to: string;
+  label: string;
+  icon: typeof Activity;
+  badge?: string;
+}
+
+export const NAV_ITEMS: NavItem[] = [
+  { to: '/', label: 'Overview', icon: LayoutDashboard },
+  { to: '/runs', label: 'Running Log', icon: Route },
+  { to: '/plan', label: 'Training Plan', icon: ClipboardCheck, badge: 'S6' },
+  { to: '/calendar', label: 'Calendar', icon: CalendarDays, badge: 'S4' },
+  { to: '/analytics', label: 'Analytics', icon: BarChart3, badge: 'S5' },
+  { to: '/coach', label: 'Coach', icon: Bot, badge: 'S7' },
+  { to: '/personal-bests', label: 'Personal Bests', icon: Award, badge: 'S5' },
+  { to: '/weekly-review', label: 'Weekly Review', icon: Activity, badge: 'S7' },
+  { to: '/settings', label: 'Settings', icon: Settings },
+];
+
+const PRIMARY_NAV = NAV_ITEMS.slice(0, 6);
+const SECONDARY_NAV = NAV_ITEMS.slice(6);
 
 export function AppShell({ children }: { children: ReactNode }) {
   const { user, profile, signOut } = useAuth();
-  const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
+  const location = useLocation();
+  const [mobileOpen, setMobileOpen] = useState(false);
 
-  return (
-    <div className="min-h-screen bg-slate-50 text-slate-900">
-      {/* Desktop Sidebar */}
-      <aside className="fixed inset-y-0 left-0 z-30 hidden w-64 flex-col border-r border-slate-200 bg-white lg:flex">
-        <div className="flex h-16 items-center gap-2.5 border-b border-slate-200 px-5">
-          <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-brand-run text-white">
-            <Activity className="h-4 w-4" />
-          </div>
-          <div>
-            <div className="text-sm font-semibold tracking-tight text-slate-900">
-              Running Rebuild
+  const currentNavLabel =
+    NAV_ITEMS.find((item) =>
+      item.to === '/' ? location.pathname === '/' : location.pathname.startsWith(item.to)
+    )?.label ?? 'Workspace';
+
+  function renderNavList(onSelect?: () => void) {
+    return (
+      <div className="flex h-full flex-col justify-between px-3 py-4">
+        <div className="space-y-6">
+          <div className="flex items-center justify-between px-2">
+            <div className="flex items-center gap-2.5">
+              <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-slate-900 text-white">
+                <Activity className="h-4 w-4 text-blue-400" />
+              </div>
+              <div>
+                <div className="text-sm font-bold tracking-tight text-slate-900">
+                  Running Rebuild
+                </div>
+                <div className="font-mono text-[11px] text-slate-500">
+                  {profile?.timezone ?? 'Asia/Colombo'}
+                </div>
+              </div>
             </div>
-            <div className="text-[11px] text-slate-500">
-              {profile?.timezone ?? 'Asia/Colombo'}
+            {onSelect && (
+              <button
+                type="button"
+                onClick={onSelect}
+                aria-label="Close navigation"
+                className="rounded-lg p-1.5 text-slate-500 hover:bg-slate-100 lg:hidden"
+              >
+                <X className="h-5 w-5" />
+              </button>
+            )}
+          </div>
+
+          <div className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-2.5">
+            <div className="text-[10px] font-semibold uppercase tracking-wider text-slate-500">
+              Active Phase
+            </div>
+            <div className="mt-0.5 text-xs font-semibold text-slate-900">
+              {profile ? TRAINING_PHASE_LABELS[profile.current_phase] : 'Phase 1 — Rebuilding'}
             </div>
           </div>
+
+          <nav aria-label="Primary" className="space-y-1">
+            <div className="px-2.5 pb-1 text-[10px] font-semibold uppercase tracking-wider text-slate-400">
+              Training
+            </div>
+            {PRIMARY_NAV.map((item) => {
+              const Icon = item.icon;
+              return (
+                <NavLink
+                  key={item.to}
+                  to={item.to}
+                  end={item.to === '/'}
+                  onClick={onSelect}
+                  className={({ isActive }) =>
+                    `flex items-center justify-between rounded-lg px-2.5 py-2 text-sm font-medium transition-colors ${
+                      isActive
+                        ? 'bg-slate-900 text-white'
+                        : 'text-slate-700 hover:bg-slate-100 hover:text-slate-900'
+                    }`
+                  }
+                >
+                  {({ isActive }) => (
+                    <>
+                      <span className="flex items-center gap-2.5">
+                        <Icon
+                          className={`h-4 w-4 ${isActive ? 'text-blue-400' : 'text-slate-500'}`}
+                        />
+                        <span>{item.label}</span>
+                      </span>
+                      {item.badge && (
+                        <span
+                          className={`rounded px-1.5 py-0.5 font-mono text-[10px] ${
+                            isActive
+                              ? 'bg-slate-800 text-slate-300'
+                              : 'bg-slate-100 text-slate-500'
+                          }`}
+                        >
+                          {item.badge}
+                        </span>
+                      )}
+                    </>
+                  )}
+                </NavLink>
+              );
+            })}
+          </nav>
+
+          <nav aria-label="System" className="space-y-1">
+            <div className="px-2.5 pb-1 text-[10px] font-semibold uppercase tracking-wider text-slate-400">
+              Insights &amp; Account
+            </div>
+            {SECONDARY_NAV.map((item) => {
+              const Icon = item.icon;
+              return (
+                <NavLink
+                  key={item.to}
+                  to={item.to}
+                  onClick={onSelect}
+                  className={({ isActive }) =>
+                    `flex items-center justify-between rounded-lg px-2.5 py-2 text-sm font-medium transition-colors ${
+                      isActive
+                        ? 'bg-slate-900 text-white'
+                        : 'text-slate-700 hover:bg-slate-100 hover:text-slate-900'
+                    }`
+                  }
+                >
+                  {({ isActive }) => (
+                    <>
+                      <span className="flex items-center gap-2.5">
+                        <Icon
+                          className={`h-4 w-4 ${isActive ? 'text-blue-400' : 'text-slate-500'}`}
+                        />
+                        <span>{item.label}</span>
+                      </span>
+                      {item.badge && (
+                        <span
+                          className={`rounded px-1.5 py-0.5 font-mono text-[10px] ${
+                            isActive
+                              ? 'bg-slate-800 text-slate-300'
+                              : 'bg-slate-100 text-slate-500'
+                          }`}
+                        >
+                          {item.badge}
+                        </span>
+                      )}
+                    </>
+                  )}
+                </NavLink>
+              );
+            })}
+          </nav>
         </div>
 
-        <nav aria-label="Primary" className="flex-1 space-y-1 overflow-y-auto px-3 py-4">
-          {NAV_ITEMS.map(({ to, label, icon: Icon }) => (
-            <NavLink
-              key={to}
-              to={to}
-              end={to === '/'}
-              className={({ isActive }) =>
-                `flex min-h-[40px] items-center gap-3 rounded-lg px-3 py-2 text-sm font-medium transition-colors ${
-                  isActive
-                    ? 'bg-blue-50 text-brand-run'
-                    : 'text-slate-600 hover:bg-slate-100 hover:text-slate-900'
-                }`
-              }
-            >
-              <Icon className="h-4 w-4 shrink-0" />
-              <span>{label}</span>
-            </NavLink>
-          ))}
-        </nav>
-
-        <div className="border-t border-slate-200 p-3">
-          <div className="mb-2 truncate px-3 text-xs text-slate-500">
-            {profile?.display_name ?? user?.email}
+        <div className="border-t border-slate-200 pt-3">
+          <div className="truncate px-2.5 text-xs font-medium text-slate-700">
+            {profile?.display_name || user?.email || 'Athlete'}
           </div>
+          {user?.email && profile?.display_name && (
+            <div className="truncate px-2.5 text-[11px] text-slate-400">{user.email}</div>
+          )}
           <button
             type="button"
             onClick={() => void signOut()}
-            className="flex min-h-[40px] w-full items-center gap-2.5 rounded-lg px-3 py-2 text-sm font-medium text-slate-600 hover:bg-slate-100 hover:text-slate-900"
+            className="mt-2 flex w-full items-center gap-2 rounded-lg px-2.5 py-2 text-xs font-medium text-slate-600 transition-colors hover:bg-red-50 hover:text-red-700"
           >
-            <LogOut className="h-4 w-4" />
-            <span>Sign Out</span>
+            <LogOut className="h-3.5 w-3.5" />
+            <span>Sign out</span>
           </button>
         </div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="min-h-screen bg-slate-50 text-slate-900 lg:flex">
+      <aside className="hidden w-64 shrink-0 border-r border-slate-200 bg-white lg:block">
+        <div className="sticky top-0 h-screen overflow-y-auto">{renderNavList()}</div>
       </aside>
 
-      {/* Mobile Top Bar */}
-      <header className="sticky top-0 z-30 flex h-14 items-center justify-between border-b border-slate-200 bg-white px-4 lg:hidden">
-        <div className="flex items-center gap-2">
-          <div className="flex h-7 w-7 items-center justify-center rounded-md bg-brand-run text-white">
-            <Activity className="h-4 w-4" />
-          </div>
-          <span className="text-sm font-semibold text-slate-900">Running Rebuild</span>
-        </div>
-        <button
-          type="button"
-          aria-label="Toggle navigation menu"
-          onClick={() => setMobileMenuOpen((v) => !v)}
-          className="flex h-11 w-11 items-center justify-center rounded-lg text-slate-600 hover:bg-slate-100"
-        >
-          {mobileMenuOpen ? <X className="h-5 w-5" /> : <Menu className="h-5 w-5" />}
-        </button>
-      </header>
-
-      {/* Mobile Full Drawer */}
-      {mobileMenuOpen && (
-        <div className="fixed inset-0 top-14 z-40 overflow-y-auto bg-white p-4 lg:hidden">
-          <nav className="space-y-1">
-            {NAV_ITEMS.map(({ to, label, icon: Icon }) => (
-              <NavLink
-                key={to}
-                to={to}
-                end={to === '/'}
-                onClick={() => setMobileMenuOpen(false)}
-                className={({ isActive }) =>
-                  `flex min-h-[48px] items-center gap-3 rounded-lg px-3 text-sm font-medium ${
-                    isActive ? 'bg-blue-50 text-brand-run' : 'text-slate-700 hover:bg-slate-100'
-                  }`
-                }
-              >
-                <Icon className="h-4 w-4" />
-                <span>{label}</span>
-              </NavLink>
-            ))}
-          </nav>
-          <div className="mt-6 border-t border-slate-200 pt-4">
-            <button
-              type="button"
-              onClick={() => void signOut()}
-              className="flex min-h-[48px] w-full items-center gap-3 rounded-lg px-3 text-sm font-medium text-slate-700 hover:bg-slate-100"
-            >
-              <LogOut className="h-4 w-4" />
-              <span>Sign Out</span>
-            </button>
-          </div>
+      {mobileOpen && (
+        <div className="fixed inset-0 z-50 flex lg:hidden">
+          <div
+            className="fixed inset-0 bg-slate-900/40"
+            onClick={() => setMobileOpen(false)}
+          />
+          <aside className="relative z-10 w-72 max-w-[82vw] bg-white shadow-xl">
+            {renderNavList(() => setMobileOpen(false))}
+          </aside>
         </div>
       )}
 
-      {/* Main Content Workspace */}
-      <main className="pb-20 lg:pb-10 lg:pl-64">
-        <div className="mx-auto max-w-6xl px-4 py-6 sm:px-6 lg:px-8">{children}</div>
-      </main>
+      <div className="flex min-w-0 flex-1 flex-col">
+        <header className="sticky top-0 z-30 flex h-14 items-center justify-between border-b border-slate-200 bg-white/95 px-4 backdrop-blur lg:px-8">
+          <div className="flex items-center gap-3">
+            <button
+              type="button"
+              onClick={() => setMobileOpen(true)}
+              aria-label="Open menu"
+              className="flex h-9 w-9 items-center justify-center rounded-lg border border-slate-200 text-slate-700 hover:bg-slate-50 lg:hidden"
+            >
+              <Menu className="h-4 w-4" />
+            </button>
+            <span className="text-xs font-semibold uppercase tracking-wider text-slate-500">
+              {currentNavLabel}
+            </span>
+          </div>
 
-      {/* Mobile Bottom Navigation */}
-      <nav
-        aria-label="Mobile Primary"
-        className="fixed inset-x-0 bottom-0 z-30 grid grid-cols-4 border-t border-slate-200 bg-white lg:hidden"
-      >
-        {NAV_ITEMS.filter((item) => item.mobilePrimary).map(({ to, label, icon: Icon }) => (
-          <NavLink
-            key={to}
-            to={to}
-            end={to === '/'}
-            className={({ isActive }) =>
-              `flex min-h-[56px] flex-col items-center justify-center gap-1 text-[11px] font-medium ${
-                isActive ? 'text-brand-run' : 'text-slate-500'
-              }`
-            }
-          >
-            <Icon className="h-5 w-5" />
-            <span>{label.split(' ')[0]}</span>
-          </NavLink>
-        ))}
-      </nav>
+          <div className="flex items-center gap-2 font-mono text-xs text-slate-500">
+            <span className="hidden rounded border border-slate-200 bg-slate-50 px-2 py-0.5 sm:inline-block">
+              Mon–Sun · {profile?.timezone ?? 'Asia/Colombo'}
+            </span>
+          </div>
+        </header>
+
+        <main className="mx-auto w-full max-w-6xl flex-1 px-4 py-6 lg:px-8 lg:py-8">
+          {children}
+        </main>
+      </div>
     </div>
   );
 }
