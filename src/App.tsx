@@ -6,6 +6,8 @@ import { OverviewPage } from '@/pages/OverviewPage';
 import { RunningLogPage } from '@/pages/RunningLogPage';
 import { RunDetailPage } from '@/pages/RunDetailPage';
 import { CalendarPage } from '@/pages/CalendarPage';
+import { AnalyticsPage } from '@/pages/AnalyticsPage';
+import { PersonalBestsPage } from '@/pages/PersonalBestsPage';
 import { SettingsPage } from '@/pages/SettingsPage';
 import { StagePlaceholderPage } from '@/pages/StagePlaceholderPage';
 
@@ -31,6 +33,8 @@ function AuthenticatedWorkspace() {
         <Route path="/runs" element={<RunningLogPage />} />
         <Route path="/runs/:id" element={<RunDetailPage />} />
         <Route path="/calendar" element={<CalendarPage />} />
+        <Route path="/analytics" element={<AnalyticsPage />} />
+        <Route path="/personal-bests" element={<PersonalBestsPage />} />
         <Route
           path="/plan"
           element={
@@ -43,17 +47,6 @@ function AuthenticatedWorkspace() {
           }
         />
         <Route
-          path="/analytics"
-          element={
-            <StagePlaceholderPage
-              title="Performance Analytics"
-              subtitle="Weekly distance, pace progression, 5K trajectory, consistency, and activity overview."
-              stageLabel="Stage 5"
-              summary="Interactive Recharts analytics strictly separating running metrics from overall physical and non-physical commitments will be implemented in Stage 5."
-            />
-          }
-        />
-        <Route
           path="/coach"
           element={
             <StagePlaceholderPage
@@ -61,17 +54,6 @@ function AuthenticatedWorkspace() {
               subtitle="Context-aware coaching grounded in recorded Supabase data."
               stageLabel="Stage 7"
               summary="Persistent conversational coaching using compact verified context and server-side Gemini calls will be implemented in Stage 7."
-            />
-          }
-        />
-        <Route
-          path="/personal-bests"
-          element={
-            <StagePlaceholderPage
-              title="Personal Bests & Milestones"
-              subtitle="1K, 3K, 5K, and 10K verified results and goal progression."
-              stageLabel="Stage 5"
-              summary="Explicit tracking distinguishing Confirmed Personal Bests, Fastest Logged Results, Estimated Performances, and Goal Targets will be implemented in Stage 5."
             />
           }
         />

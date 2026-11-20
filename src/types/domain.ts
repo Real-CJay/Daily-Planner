@@ -223,3 +223,38 @@ export interface ReadinessCheckInDraft {
   pain_details: string | null;
   notes: string | null;
 }
+
+export type BenchmarkDistance = '1K' | '3K' | '5K' | '10K';
+
+export const BENCHMARK_DISTANCES: Record<
+  BenchmarkDistance,
+  { label: string; meters: number; minMatchM: number; maxMatchM: number }
+> = {
+  '1K': { label: '1K', meters: 1000, minMatchM: 950, maxMatchM: 1050 },
+  '3K': { label: '3K', meters: 3000, minMatchM: 2900, maxMatchM: 3100 },
+  '5K': { label: '5K', meters: 5000, minMatchM: 4850, maxMatchM: 5200 },
+  '10K': { label: '10K', meters: 10000, minMatchM: 9800, maxMatchM: 10300 },
+};
+
+export interface PersonalBest {
+  id: string;
+  user_id: string;
+  distance_label: BenchmarkDistance;
+  distance_m: number;
+  duration_s: number;
+  achieved_date: string; // YYYY-MM-DD
+  session_id: string | null;
+  is_confirmed: boolean;
+  notes: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface PersonalBestDraft {
+  distance_label: BenchmarkDistance;
+  distance_m: number;
+  duration_s: number;
+  achieved_date: string;
+  session_id: string | null;
+  notes: string | null;
+}
