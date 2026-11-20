@@ -133,6 +133,8 @@ export function ScheduleBlockModal({
                     setPhysicalLoad('LOW');
                   } else if (next === 'KARATE') {
                     setPhysicalLoad('HIGH');
+                  } else if (next === 'STRENGTH') {
+                    setPhysicalLoad('MODERATE');
                   }
                 }}
                 className="mt-1 block w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm"

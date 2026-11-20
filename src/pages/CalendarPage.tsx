@@ -52,6 +52,7 @@ type CalendarView = 'WEEK' | 'MONTH' | 'AGENDA';
 const ALL_CATEGORIES: ActivityCategory[] = [
   'RUNNING',
   'KARATE',
+  'STRENGTH',
   'RECOVERY',
   'VOCAL',
   'DRUMMING',

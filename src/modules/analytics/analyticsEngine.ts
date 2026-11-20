@@ -185,6 +185,7 @@ export function computeActivitySeparation(
   const categories: ActivityCategory[] = [
     'RUNNING',
     'KARATE',
+    'STRENGTH',
     'RECOVERY',
     'VOCAL',
     'DRUMMING',

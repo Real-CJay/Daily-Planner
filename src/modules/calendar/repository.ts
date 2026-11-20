@@ -12,6 +12,7 @@ export const scheduleBlockDraftSchema = z.object({
   category: z.enum([
     'RUNNING',
     'KARATE',
+    'STRENGTH',
     'RECOVERY',
     'VOCAL',
     'DRUMMING',
@@ -176,6 +177,19 @@ export async function seedDefaultRecurringSchedule(
       status: 'PLANNED',
       physical_load: 'NONE',
       notes: 'Full recovery, mobility, and sleep prioritization.',
+    },
+    {
+      title: 'Home Workout (Rotating Split)',
+      category: 'STRENGTH',
+      block_date: anchorDate,
+      start_time: '06:45',
+      end_time: '07:10',
+      duration_min: 25,
+      is_recurring: true,
+      recurrence_days: [1, 2, 3, 4, 5, 6], // Mon–Sat (Sun protected rest)
+      status: 'PLANNED',
+      physical_load: 'MODERATE',
+      notes: 'Tag Upper, Core, Lower, Full Body, or App Rest Day on check-off.',
     },
   ];
 

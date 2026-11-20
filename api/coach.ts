@@ -1,4 +1,5 @@
 // Server-side serverless handler (Vercel / Node). Never import this inside src/.
+declare const process: { env: Record<string, string | undefined> };
 interface CoachRequestBody {
   mode?: 'CHAT' | 'WEEKLY_REVIEW';
   message?: string;

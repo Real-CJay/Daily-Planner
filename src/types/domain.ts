@@ -15,6 +15,7 @@ export type TrainingPhase =
 export type ActivityCategory =
   | 'RUNNING'
   | 'KARATE'
+  | 'STRENGTH'
   | 'RECOVERY'
   | 'VOCAL'
   | 'DRUMMING'
@@ -24,6 +25,7 @@ export type ActivityCategory =
 export const ACTIVITY_CATEGORY_LABELS: Record<ActivityCategory, string> = {
   RUNNING: 'Running',
   KARATE: 'Karate',
+  STRENGTH: 'Home Workout',
   RECOVERY: 'Rest & Recovery',
   VOCAL: 'Vocal Practice',
   DRUMMING: 'Drumming',
@@ -361,4 +363,55 @@ export interface WeeklyReviewDraft {
   ai_narrative: string | null;
   ai_model: string | null;
   user_reflection: string | null;
+}
+
+export type StrengthFocus =
+  | 'UPPER'
+  | 'CORE'
+  | 'LOWER'
+  | 'FULL_BODY'
+  | 'MOBILITY'
+  | 'APP_REST';
+
+export const STRENGTH_FOCUS_LABELS: Record<StrengthFocus, string> = {
+  UPPER: 'Upper Body',
+  CORE: 'Core / Abs',
+  LOWER: 'Lower Body / Legs',
+  FULL_BODY: 'Full Body / HIIT',
+  MOBILITY: 'Mobility / Stretch',
+  APP_REST: 'App Rest Day',
+};
+
+export const STRENGTH_FOCUS_LOAD: Record<StrengthFocus, PhysicalLoadLevel> = {
+  UPPER: 'LOW',
+  CORE: 'LOW',
+  LOWER: 'HIGH',
+  FULL_BODY: 'HIGH',
+  MOBILITY: 'NONE',
+  APP_REST: 'NONE',
+};
+
+export type CompletionStatus = 'COMPLETED' | 'SKIPPED' | 'REST_DAY';
+
+export interface ScheduleCompletion {
+  id: string;
+  user_id: string;
+  block_id: string;
+  occurrence_date: string; // YYYY-MM-DD
+  status: CompletionStatus;
+  strength_focus: StrengthFocus | null;
+  duration_min: number | null;
+  physical_load: PhysicalLoadLevel;
+  notes: string | null;
+  created_at: string;
+}
+
+export interface ScheduleCompletionDraft {
+  block_id: string;
+  occurrence_date: string;
+  status: CompletionStatus;
+  strength_focus: StrengthFocus | null;
+  duration_min: number | null;
+  physical_load: PhysicalLoadLevel;
+  notes: string | null;
 }
