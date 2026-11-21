@@ -1,4 +1,4 @@
-import type { ReactNode, ButtonHTMLAttributes } from 'react';
+﻿import type { ReactNode, ButtonHTMLAttributes } from 'react';
 import type { ActivityCategory, DataOrigin } from '@/types/domain';
 
 export function Card({
@@ -10,7 +10,7 @@ export function Card({
 }) {
   return (
     <div
-      className={`rounded-xl border border-slate-200 bg-white shadow-[0_1px_2px_rgba(15,23,42,0.04)] dark:border-slate-800 dark:bg-[#111827] dark:shadow-none ${className}`}
+      className={`rounded-xl border border-[#E5EAE7] bg-white shadow-[0_1px_2px_rgba(22,28,25,0.03)] dark:border-morgen-border dark:bg-morgen-surface dark:shadow-none ${className}`}
     >
       {children}
     </div>
@@ -27,13 +27,13 @@ export function PageHeader({
   action?: ReactNode;
 }) {
   return (
-    <div className="mb-6 flex flex-col gap-3 border-b border-slate-200 pb-5 dark:border-slate-800 sm:flex-row sm:items-end sm:justify-between">
+    <div className="mb-6 flex flex-col gap-3 border-b border-[#E5EAE7] pb-5 dark:border-morgen-border sm:flex-row sm:items-end sm:justify-between">
       <div>
-        <h1 className="text-2xl font-semibold tracking-tight text-slate-900 dark:text-slate-50">
+        <h1 className="font-display text-2xl font-bold tracking-tight text-[#161C19] dark:font-sans dark:text-white">
           {title}
         </h1>
         {subtitle && (
-          <p className="mt-1 text-sm text-slate-600 dark:text-slate-400">{subtitle}</p>
+          <p className="mt-1 text-sm text-flomo-slate dark:text-morgen-body/80">{subtitle}</p>
         )}
       </div>
       {action && <div className="shrink-0">{action}</div>}
@@ -43,23 +43,23 @@ export function PageHeader({
 
 const ORIGIN_STYLES: Record<DataOrigin, string> = {
   RECORDED:
-    'border-blue-200 bg-blue-50 text-blue-800 dark:border-blue-900/80 dark:bg-blue-950/60 dark:text-blue-300',
+    'border-[#2CCC74]/40 bg-[#2CCC74]/10 text-[#176D3E] dark:border-morgen-red/35 dark:bg-morgen-wine/70 dark:text-morgen-red',
   CALCULATED:
-    'border-slate-200 bg-slate-100 text-slate-700 dark:border-slate-700 dark:bg-slate-800/80 dark:text-slate-300',
+    'border-[#E5EAE7] bg-[#F7F9F8] text-[#525C57] dark:border-morgen-border dark:bg-morgen-elevated dark:text-morgen-body',
   ESTIMATED:
-    'border-amber-200 bg-amber-50 text-amber-800 dark:border-amber-900/80 dark:bg-amber-950/60 dark:text-amber-300',
+    'border-[#CFBE9A] bg-[#F4DCA4]/45 text-[#6D5627] dark:border-morgen-yellow/35 dark:bg-morgen-yellow/15 dark:text-morgen-yellow',
   PLANNED:
-    'border-indigo-200 bg-indigo-50 text-indigo-800 dark:border-indigo-900/80 dark:bg-indigo-950/60 dark:text-indigo-300',
+    'border-slate-200 bg-slate-100/80 text-slate-700 dark:border-morgen-slate/40 dark:bg-morgen-slate/15 dark:text-[#C5D0DE]',
   SUGGESTED:
-    'border-emerald-200 bg-emerald-50 text-emerald-800 dark:border-emerald-900/80 dark:bg-emerald-950/60 dark:text-emerald-300',
+    'border-[#2CCC74]/45 bg-[#2CCC74]/15 text-[#176D3E] dark:border-emerald-400/35 dark:bg-emerald-500/15 dark:text-emerald-300',
   MISSING:
-    'border-slate-200 bg-slate-50 text-slate-500 dark:border-slate-800 dark:bg-slate-900 dark:text-slate-400',
+    'border-[#E5EAE7] bg-[#F7F9F8] text-[#747C84] dark:border-morgen-border dark:bg-morgen-black/60 dark:text-morgen-muted',
 };
 
 export function ProvenanceBadge({ origin }: { origin: DataOrigin }) {
   return (
     <span
-      className={`inline-flex items-center rounded-md border px-2 py-0.5 font-mono text-[11px] font-medium tracking-wide ${ORIGIN_STYLES[origin]}`}
+      className={`inline-flex items-center rounded-md border px-2 py-0.5 font-mono text-[10px] font-medium tracking-wider ${ORIGIN_STYLES[origin]}`}
     >
       {origin}
     </span>
@@ -70,42 +70,52 @@ const CATEGORY_STYLES: Record<ActivityCategory, { label: string; classes: string
   RUNNING: {
     label: 'Running',
     classes:
-      'bg-blue-50 text-blue-800 border-blue-200 dark:bg-blue-950/60 dark:text-blue-300 dark:border-blue-900/80',
+      'bg-[#2CCC74]/15 text-[#176D3E] border-[#2CCC74]/35 dark:bg-morgen-wine/75 dark:text-morgen-red dark:border-morgen-red/35',
   },
   KARATE: {
     label: 'Karate',
     classes:
-      'bg-amber-50 text-amber-800 border-amber-200 dark:bg-amber-950/60 dark:text-amber-300 dark:border-amber-900/80',
+      'bg-[#F4DCA4]/55 text-[#7A5416] border-[#CFBE9A] dark:bg-morgen-yellow/15 dark:text-morgen-yellow dark:border-morgen-yellow/35',
   },
   STRENGTH: {
     label: 'Home Workout',
     classes:
-      'bg-teal-50 text-teal-800 border-teal-200 dark:bg-teal-950/60 dark:text-teal-300 dark:border-teal-900/80',
+      'bg-teal-50 text-teal-800 border-teal-200 dark:bg-teal-500/15 dark:text-teal-300 dark:border-teal-400/30',
   },
   RECOVERY: {
     label: 'Recovery',
     classes:
-      'bg-emerald-50 text-emerald-800 border-emerald-200 dark:bg-emerald-950/60 dark:text-emerald-300 dark:border-emerald-900/80',
+      'bg-emerald-50 text-emerald-800 border-emerald-200 dark:bg-emerald-500/15 dark:text-emerald-300 dark:border-emerald-400/30',
   },
   VOCAL: {
     label: 'Vocal Practice',
     classes:
-      'bg-rose-50 text-rose-800 border-rose-200 dark:bg-rose-950/60 dark:text-rose-300 dark:border-rose-900/80',
+      'bg-rose-50 text-rose-800 border-rose-200 dark:bg-pink-500/15 dark:text-pink-300 dark:border-pink-400/30',
   },
   DRUMMING: {
     label: 'Drumming',
     classes:
-      'bg-violet-50 text-violet-800 border-violet-200 dark:bg-violet-950/60 dark:text-violet-300 dark:border-violet-900/80',
+      'bg-violet-50 text-violet-800 border-violet-200 dark:bg-violet-500/15 dark:text-violet-300 dark:border-violet-400/30',
+  },
+  GUITAR: {
+    label: 'Guitar',
+    classes:
+      'bg-orange-50 text-orange-800 border-orange-200 dark:bg-orange-500/15 dark:text-orange-300 dark:border-orange-400/30',
+  },
+  KEYBOARD: {
+    label: 'Keyboard',
+    classes:
+      'bg-sky-50 text-sky-800 border-sky-200 dark:bg-sky-500/15 dark:text-sky-300 dark:border-sky-400/30',
   },
   UNIVERSITY: {
     label: 'University',
     classes:
-      'bg-indigo-50 text-indigo-800 border-indigo-200 dark:bg-indigo-950/60 dark:text-indigo-300 dark:border-indigo-900/80',
+      'bg-slate-100 text-slate-700 border-slate-200 dark:bg-morgen-slate/20 dark:text-[#C5D0DE] dark:border-morgen-slate/35',
   },
   CUSTOM: {
     label: 'Commitment',
     classes:
-      'bg-slate-100 text-slate-700 border-slate-200 dark:bg-slate-800 dark:text-slate-300 dark:border-slate-700',
+      'bg-[#F7F9F8] text-[#525C57] border-[#E5EAE7] dark:bg-morgen-elevated dark:text-morgen-body dark:border-morgen-border',
   },
 };
 
@@ -134,15 +144,15 @@ export function StatTile({
   return (
     <Card className="p-4">
       <div className="flex items-start justify-between gap-2">
-        <span className="text-xs font-medium uppercase tracking-wider text-slate-500 dark:text-slate-400">
+        <span className="text-[11px] font-medium uppercase tracking-wider text-flomo-slate dark:text-morgen-muted">
           {label}
         </span>
         <ProvenanceBadge origin={origin} />
       </div>
-      <div className="mt-3 font-mono text-2xl font-semibold tracking-tight text-slate-900 tabular-nums dark:text-slate-50">
+      <div className="mt-3 font-mono text-2xl font-semibold tracking-tight text-[#161C19] tabular-nums dark:text-white">
         {value}
       </div>
-      {meta && <p className="mt-1.5 text-xs text-slate-500 dark:text-slate-400">{meta}</p>}
+      {meta && <p className="mt-1.5 text-xs text-flomo-slate dark:text-morgen-body/75">{meta}</p>}
     </Card>
   );
 }
@@ -160,11 +170,13 @@ export function EmptyState({
 }) {
   return (
     <Card className="flex flex-col items-center justify-center px-6 py-12 text-center">
-      <div className="mb-3 flex h-11 w-11 items-center justify-center rounded-full border border-slate-200 bg-slate-50 text-slate-500 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-400">
+      <div className="mb-3 flex h-11 w-11 items-center justify-center rounded-full border border-[#E5EAE7] bg-[#F7F9F8] text-[#176D3E] dark:border-morgen-border dark:bg-morgen-elevated dark:text-morgen-red">
         {icon}
       </div>
-      <h2 className="text-base font-semibold text-slate-900 dark:text-slate-100">{title}</h2>
-      <p className="mt-1.5 max-w-md text-sm text-slate-600 dark:text-slate-400">{description}</p>
+      <h2 className="text-base font-semibold text-[#161C19] dark:text-white">{title}</h2>
+      <p className="mt-1.5 max-w-md text-sm text-flomo-slate dark:text-morgen-body/80">
+        {description}
+      </p>
       {action && <div className="mt-5">{action}</div>}
     </Card>
   );
@@ -180,16 +192,16 @@ export function Button({
 }: ButtonHTMLAttributes<HTMLButtonElement> & { variant?: ButtonVariant }) {
   const variantClasses: Record<ButtonVariant, string> = {
     primary:
-      'bg-blue-600 text-white border border-blue-600 hover:bg-blue-700 disabled:bg-slate-300 disabled:border-slate-300 disabled:text-slate-500 dark:bg-blue-600 dark:border-blue-500 dark:hover:bg-blue-500 dark:disabled:bg-slate-800 dark:disabled:border-slate-800 dark:disabled:text-slate-500',
+      'bg-[#176D3E] text-white border border-[#176D3E] hover:bg-[#135A33] disabled:bg-slate-200 disabled:border-slate-200 disabled:text-slate-400 dark:bg-morgen-rose dark:border-morgen-rose dark:text-white dark:hover:bg-[#B43F4E] dark:disabled:bg-morgen-elevated dark:disabled:border-morgen-border dark:disabled:text-morgen-muted',
     secondary:
-      'bg-white text-slate-800 border border-slate-300 hover:bg-slate-50 disabled:text-slate-400 dark:bg-slate-900 dark:text-slate-200 dark:border-slate-700 dark:hover:bg-slate-800 dark:disabled:text-slate-600',
+      'bg-white text-[#161C19] border border-[#D8E0DC] hover:bg-[#F7F9F8] disabled:text-slate-400 dark:bg-morgen-surface dark:text-white dark:border-morgen-border dark:hover:bg-morgen-slateHover dark:disabled:text-morgen-muted',
     ghost:
-      'bg-transparent text-slate-700 border border-transparent hover:bg-slate-100 dark:text-slate-300 dark:hover:bg-slate-800',
+      'bg-transparent text-[#525C57] border border-transparent hover:bg-[#F7F9F8] dark:text-morgen-body dark:hover:bg-morgen-elevated',
   };
 
   return (
     <button
-      className={`inline-flex min-h-[42px] items-center justify-center gap-2 rounded-lg px-4 py-2 text-sm font-medium transition-colors focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-1 dark:focus:ring-offset-[#0B1120] ${variantClasses[variant]} ${className}`}
+      className={`inline-flex min-h-[40px] items-center justify-center gap-2 rounded-lg px-4 py-2 text-sm font-semibold tracking-[0.01em] transition-colors focus:outline-none focus:ring-2 focus:ring-[#2CCC74] focus:ring-offset-1 dark:focus:ring-morgen-red dark:focus:ring-offset-morgen-black ${variantClasses[variant]} ${className}`}
       {...props}
     >
       {children}

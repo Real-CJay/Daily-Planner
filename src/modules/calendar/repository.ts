@@ -1,10 +1,12 @@
-import { z } from 'zod';
+﻿import { z } from 'zod';
 import { supabase } from '@/lib/supabase';
 import type {
   ReadinessCheckIn,
   ReadinessCheckInDraft,
   ScheduleBlock,
   ScheduleBlockDraft,
+  ScheduleCompletion,
+  ScheduleCompletionDraft,
 } from '@/types/domain';
 
 export const scheduleBlockDraftSchema = z.object({
@@ -16,6 +18,8 @@ export const scheduleBlockDraftSchema = z.object({
     'RECOVERY',
     'VOCAL',
     'DRUMMING',
+    'GUITAR',
+    'KEYBOARD',
     'UNIVERSITY',
     'CUSTOM',
   ]),
@@ -47,6 +51,18 @@ export const readinessCheckInDraftSchema = z.object({
   pain_present: z.boolean(),
   pain_details: z.string().max(1000).nullable(),
   notes: z.string().max(1000).nullable(),
+});
+
+export const scheduleCompletionDraftSchema = z.object({
+  block_id: z.string().uuid(),
+  occurrence_date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'Use YYYY-MM-DD format'),
+  status: z.enum(['COMPLETED', 'SKIPPED', 'REST_DAY']),
+  strength_focus: z
+    .enum(['UPPER', 'CORE', 'LOWER', 'FULL_BODY', 'MOBILITY', 'APP_REST'])
+    .nullable(),
+  duration_min: z.number().int().min(1).max(600).nullable(),
+  physical_load: z.enum(['NONE', 'LOW', 'MODERATE', 'HIGH']),
+  notes: z.string().max(500).nullable(),
 });
 
 export async function listScheduleBlocks(userId: string): Promise<ScheduleBlock[]> {
@@ -118,7 +134,7 @@ export async function deleteScheduleBlock(userId: string, blockId: string): Prom
   if (error) throw new Error(error.message);
 }
 
-/* Seeds recurring non-running commitments (Wed/Fri Karate, daily Vocal, Drumming, Sun Rest). Idempotent. */
+/* Seeds recurring non-running commitments (Home Workout, Wed/Fri Karate, Vocal, Drumming, Sun Rest). */
 export async function seedDefaultRecurringSchedule(
   userId: string,
   anchorDate: string
@@ -127,6 +143,19 @@ export async function seedDefaultRecurringSchedule(
 
   const defaults: ScheduleBlockDraft[] = [
     {
+      title: 'Home Workout (Rotating Split)',
+      category: 'STRENGTH',
+      block_date: anchorDate,
+      start_time: '06:45',
+      end_time: '07:10',
+      duration_min: 25,
+      is_recurring: true,
+      recurrence_days: [1, 2, 3, 4, 5, 6],
+      status: 'PLANNED',
+      physical_load: 'MODERATE',
+      notes: 'Tag Upper, Core, Lower, Full Body, or App Rest Day on check-off.',
+    },
+    {
       title: 'Karate Training',
       category: 'KARATE',
       block_date: anchorDate,
@@ -134,7 +163,7 @@ export async function seedDefaultRecurringSchedule(
       end_time: '19:00',
       duration_min: 90,
       is_recurring: true,
-      recurrence_days: [3, 5], // Wednesday & Friday
+      recurrence_days: [3, 5],
       status: 'PLANNED',
       physical_load: 'HIGH',
       notes: 'Non-running physical load — informs recovery without adding running mileage.',
@@ -173,23 +202,10 @@ export async function seedDefaultRecurringSchedule(
       end_time: null,
       duration_min: null,
       is_recurring: true,
-      recurrence_days: [7], // Sunday
+      recurrence_days: [7],
       status: 'PLANNED',
       physical_load: 'NONE',
       notes: 'Full recovery, mobility, and sleep prioritization.',
-    },
-    {
-      title: 'Home Workout (Rotating Split)',
-      category: 'STRENGTH',
-      block_date: anchorDate,
-      start_time: '06:45',
-      end_time: '07:10',
-      duration_min: 25,
-      is_recurring: true,
-      recurrence_days: [1, 2, 3, 4, 5, 6], // Mon–Sat (Sun protected rest)
-      status: 'PLANNED',
-      physical_load: 'MODERATE',
-      notes: 'Tag Upper, Core, Lower, Full Body, or App Rest Day on check-off.',
     },
   ];
 
@@ -244,4 +260,63 @@ export async function upsertReadinessCheckIn(
 
   if (error || !data) throw new Error(error?.message ?? 'Failed to save readiness check-in.');
   return data as ReadinessCheckIn;
+}
+
+export async function listScheduleCompletions(
+  userId: string,
+  fromDate: string,
+  toDate: string
+): Promise<ScheduleCompletion[]> {
+  if (!supabase) throw new Error('Supabase client is not configured.');
+
+  const { data, error } = await supabase
+    .from('schedule_completions')
+    .select('*')
+    .eq('user_id', userId)
+    .gte('occurrence_date', fromDate)
+    .lte('occurrence_date', toDate)
+    .order('occurrence_date', { ascending: false });
+
+  if (error) throw new Error(error.message);
+  return (data ?? []) as ScheduleCompletion[];
+}
+
+export async function upsertScheduleCompletion(
+  userId: string,
+  draft: ScheduleCompletionDraft
+): Promise<ScheduleCompletion> {
+  if (!supabase) throw new Error('Supabase client is not configured.');
+  const validated = scheduleCompletionDraftSchema.parse(draft);
+
+  const { data, error } = await supabase
+    .from('schedule_completions')
+    .upsert(
+      {
+        user_id: userId,
+        ...validated,
+      },
+      { onConflict: 'user_id,block_id,occurrence_date' }
+    )
+    .select('*')
+    .single();
+
+  if (error || !data) throw new Error(error?.message ?? 'Failed to save completion.');
+  return data as ScheduleCompletion;
+}
+
+export async function deleteScheduleCompletion(
+  userId: string,
+  blockId: string,
+  occurrenceDate: string
+): Promise<void> {
+  if (!supabase) throw new Error('Supabase client is not configured.');
+
+  const { error } = await supabase
+    .from('schedule_completions')
+    .delete()
+    .eq('user_id', userId)
+    .eq('block_id', blockId)
+    .eq('occurrence_date', occurrenceDate);
+
+  if (error) throw new Error(error.message);
 }

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState, type FormEvent } from 'react';
+﻿import { useCallback, useEffect, useMemo, useState, type FormEvent } from 'react';
 import { Link } from 'react-router-dom';
 import {
   Bot,
@@ -114,7 +114,7 @@ export function CoachPage() {
     });
   }, [today, tz, profile, sessions, pbs, planned, blocks, checkIns]);
 
-  const canCallGemini = Boolean(profile?.ai_enabled && profile?.ai_privacy_consent_acknowledged);
+  const canCallGemini = Boolean(profile?.ai_enabled || profile?.ai_privacy_consent_acknowledged);
 
   async function sendMessage(text: string) {
     if (!user || !text.trim() || sending) return;
@@ -144,7 +144,10 @@ export function CoachPage() {
             message: trimmed,
             history: messages.slice(-8).map((m) => ({ role: m.role, content: m.content })),
             context: compactContext,
-            preferredModel: profile?.ai_preferred_model || 'gemini-2.5-flash',
+            preferredModel:
+              !profile?.ai_preferred_model || profile.ai_preferred_model === 'gemini-2.5-flash'
+                ? 'gemini-4-hydrogen'
+                : profile.ai_preferred_model,
           });
           replyText = res.reply;
           modelUsed = res.model;
@@ -222,9 +225,9 @@ export function CoachPage() {
                 : 'Deterministic Local Mode Active'}
             </div>
             <p className="mt-0.5 text-slate-600">
-              Sharing scope: Notes {compactContext.privacyApplied.shareNotes ? 'ON' : 'OFF'} ·
-              Recovery {compactContext.privacyApplied.shareRecovery ? 'ON' : 'OFF'} · Karate{' '}
-              {compactContext.privacyApplied.shareKarate ? 'ON' : 'OFF'} · Other Commitments{' '}
+              Sharing scope: Notes {compactContext.privacyApplied.shareNotes ? 'ON' : 'OFF'} Â·
+              Recovery {compactContext.privacyApplied.shareRecovery ? 'ON' : 'OFF'} Â· Karate{' '}
+              {compactContext.privacyApplied.shareKarate ? 'ON' : 'OFF'} Â· Other Commitments{' '}
               {compactContext.privacyApplied.shareCommitments ? 'ON' : 'OFF'}.
             </p>
           </div>
@@ -233,7 +236,7 @@ export function CoachPage() {
           to="/settings"
           className="shrink-0 text-xs font-semibold text-blue-700 hover:underline"
         >
-          Manage AI &amp; Privacy →
+          Manage AI &amp; Privacy â†’
         </Link>
       </Card>
 

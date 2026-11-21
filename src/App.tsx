@@ -1,4 +1,5 @@
-import { BrowserRouter, Navigate, Route, Routes } from 'react-router-dom';
+﻿import { BrowserRouter, Navigate, Route, Routes } from 'react-router-dom';
+import { ThemeProvider } from '@/modules/theme/ThemeContext';
 import { AuthProvider, useAuth } from '@/modules/auth/AuthContext';
 import { AuthPage } from '@/modules/auth/AuthPage';
 import { AppShell } from '@/components/layout/AppShell';
@@ -18,7 +19,7 @@ function AuthenticatedWorkspace() {
 
   if (loading) {
     return (
-      <div className="flex min-h-screen items-center justify-center bg-white text-sm text-slate-500">
+      <div className="flex min-h-screen items-center justify-center bg-white text-sm text-slate-500 dark:bg-[#0B1120] dark:text-slate-400">
         Loading workspace...
       </div>
     );
@@ -49,11 +50,13 @@ function AuthenticatedWorkspace() {
 
 export function App() {
   return (
-    <BrowserRouter>
-      <AuthProvider>
-        <AuthenticatedWorkspace />
-      </AuthProvider>
-    </BrowserRouter>
+    <ThemeProvider>
+      <BrowserRouter>
+        <AuthProvider>
+          <AuthenticatedWorkspace />
+        </AuthProvider>
+      </BrowserRouter>
+    </ThemeProvider>
   );
 }
 

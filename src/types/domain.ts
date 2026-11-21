@@ -1,4 +1,4 @@
-export type DataOrigin =
+﻿export type DataOrigin =
   | 'RECORDED'
   | 'CALCULATED'
   | 'ESTIMATED'
@@ -19,16 +19,20 @@ export type ActivityCategory =
   | 'RECOVERY'
   | 'VOCAL'
   | 'DRUMMING'
+  | 'GUITAR'
+  | 'KEYBOARD'
   | 'UNIVERSITY'
   | 'CUSTOM';
 
 export const ACTIVITY_CATEGORY_LABELS: Record<ActivityCategory, string> = {
   RUNNING: 'Running',
   KARATE: 'Karate',
-  STRENGTH: 'Home Workout',
+  STRENGTH: 'Strength',
   RECOVERY: 'Rest & Recovery',
-  VOCAL: 'Vocal Practice',
-  DRUMMING: 'Drumming',
+  VOCAL: 'Vocal',
+  DRUMMING: 'Drums',
+  GUITAR: 'Guitar',
+  KEYBOARD: 'Keyboard',
   UNIVERSITY: 'University',
   CUSTOM: 'Custom',
 };
@@ -55,10 +59,10 @@ export interface UserProfile {
 }
 
 export const TRAINING_PHASE_LABELS: Record<TrainingPhase, string> = {
-  REBUILDING: 'Phase 1 — Rebuilding',
-  BUILDING_CONSISTENCY: 'Phase 2 — Building Consistency',
-  PERFORMANCE_DEVELOPMENT: 'Phase 3 — Performance Development',
-  GOAL_SPECIFIC_5K: 'Phase 4 — Goal-Specific 5K Training',
+  REBUILDING: 'Phase 1 â€” Rebuilding',
+  BUILDING_CONSISTENCY: 'Phase 2 â€” Building Consistency',
+  PERFORMANCE_DEVELOPMENT: 'Phase 3 â€” Performance Development',
+  GOAL_SPECIFIC_5K: 'Phase 4 â€” Goal-Specific 5K Training',
 };
 
 export type WorkoutType =
@@ -414,4 +418,22 @@ export interface ScheduleCompletionDraft {
   duration_min: number | null;
   physical_load: PhysicalLoadLevel;
   notes: string | null;
+}
+export interface HabitLog {
+  id: string;
+  user_id: string;
+  habit_key: string;
+  log_date: string; // YYYY-MM-DD
+  completed: boolean;
+  notes: string | null;
+  created_at: string;
+}
+
+export interface HabitStreakSummary {
+  habitKey: string;
+  checkedToday: boolean;
+  currentStreak: number;
+  bestStreak: number;
+  totalDays: number;
+  weekStatus: { date: string; completed: boolean }[];
 }
