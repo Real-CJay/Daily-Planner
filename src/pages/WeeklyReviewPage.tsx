@@ -1,24 +1,20 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+﻿import { useCallback, useEffect, useMemo, useState } from 'react';
+import { Link } from 'react-router-dom';
 import {
   AlertTriangle,
-  CheckCircle2,
+  ArrowRight,
+  Calendar,
+  Check,
   ChevronLeft,
   ChevronRight,
-  Save,
+  HeartPulse,
+  Route,
   Sparkles,
 } from 'lucide-react';
-import {
-  Button,
-  Card,
-  CategoryBadge,
-  PageHeader,
-  ProvenanceBadge,
-  StatTile,
-} from '@/design-system';
-import { formatDurationSeconds, getLocalDateString, getMondayWeekStart } from '@/lib/datetime';
+import { getLocalDateString, getMondayWeekStart } from '@/lib/datetime';
 import { useAuth } from '@/modules/auth/AuthContext';
 import { listRunningSessions } from '@/modules/running/repository';
-import { formatDistanceKm, formatPace } from '@/modules/running/calculations';
+import { formatPace } from '@/modules/running/calculations';
 import { listPersonalBests } from '@/modules/analytics/repository';
 import { listReadinessCheckIns, listScheduleBlocks } from '@/modules/calendar/repository';
 import { addDaysIso } from '@/modules/calendar/scheduleEngine';
@@ -40,6 +36,16 @@ import type {
   ScheduleBlock,
   WeeklyReviewRecord,
 } from '@/types/domain';
+
+function formatShortDate(iso: string): string {
+  const [y, m, d] = iso.split('-').map(Number);
+  const dt = new Date(Date.UTC(y, (m || 1) - 1, d || 1));
+  return dt.toLocaleDateString('en-US', {
+    month: 'short',
+    day: 'numeric',
+    timeZone: 'UTC',
+  });
+}
 
 export function WeeklyReviewPage() {
   const { user, profile } = useAuth();
@@ -133,7 +139,7 @@ export function WeeklyReviewPage() {
         user_reflection: reflection.trim() ? reflection.trim() : null,
       });
       await loadData();
-      setNotice(`Saved reflection and weekly snapshot for ${review.weekStart}.`);
+      setNotice(`Saved reflection for ${formatShortDate(review.weekStart)}.`);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Unable to save weekly review.');
     } finally {
@@ -173,7 +179,7 @@ export function WeeklyReviewPage() {
         message: `Weekly review for ${review.weekStart} to ${review.weekEnd}`,
         context: compactContext,
         weeklySummary: review,
-        preferredModel: profile?.ai_preferred_model || 'gemini-2.5-flash',
+        preferredModel: profile?.ai_preferred_model || 'gemini-4-hydrogen',
       });
 
       await upsertWeeklyReview(user.id, {
@@ -186,11 +192,11 @@ export function WeeklyReviewPage() {
       });
 
       await loadData();
-      setNotice(`Generated and cached AI narrative review for ${review.weekStart}.`);
+      setNotice(`Generated and cached AI summary for ${formatShortDate(review.weekStart)}.`);
     } catch (err) {
       setError(
         err instanceof Error
-          ? `${err.message} (Deterministic review below remains complete and authoritative.)`
+          ? `${err.message} (Deterministic summary remains complete.)`
           : 'Could not reach `/api/coach`.'
       );
     } finally {
@@ -199,254 +205,261 @@ export function WeeklyReviewPage() {
   }
 
   return (
-    <div className="space-y-6">
-      <PageHeader
-        title="Weekly Training Review"
-        subtitle={`Deterministic Monday–Sunday report (${tz}) with optional cached Gemini narrative and athlete reflection.`}
-        action={
-          <div className="flex items-center gap-2">
-            <button
-              type="button"
-              onClick={() => setSelectedWeekStart((w) => addDaysIso(w, -7))}
-              aria-label="Previous week"
-              className="flex h-9 w-9 items-center justify-center rounded-lg border border-slate-300 bg-white text-slate-700 hover:bg-slate-50"
-            >
-              <ChevronLeft className="h-4 w-4" />
-            </button>
-            <button
-              type="button"
-              onClick={() => setSelectedWeekStart(getMondayWeekStart(today))}
-              className="rounded-lg border border-slate-300 bg-white px-3 py-1.5 font-mono text-xs font-semibold text-slate-800 hover:bg-slate-50"
-            >
-              {review.weekStart} → {review.weekEnd}
-            </button>
-            <button
-              type="button"
-              onClick={() => setSelectedWeekStart((w) => addDaysIso(w, 7))}
-              aria-label="Next week"
-              className="flex h-9 w-9 items-center justify-center rounded-lg border border-slate-300 bg-white text-slate-700 hover:bg-slate-50"
-            >
-              <ChevronRight className="h-4 w-4" />
-            </button>
-          </div>
-        }
-      />
+    <div className="space-y-7 pb-6">
+      {/* Studio Header (Common Default Stride Blue) */}
+      <header className="flex flex-col justify-between gap-4 sm:flex-row sm:items-end">
+        <h1 className="text-[34px] font-bold leading-[1.08] tracking-[-0.055em] text-[var(--ink)] sm:text-[42px]">
+          A look at your <em className="not-italic text-[var(--blue)]">week.</em>
+        </h1>
+
+        <div className="flex items-center gap-2">
+          <button
+            type="button"
+            onClick={() => setSelectedWeekStart((w) => addDaysIso(w, -7))}
+            aria-label="Previous week"
+            className="grid h-9 w-9 place-items-center rounded-[8px] border border-[var(--line)] bg-[var(--surface)] text-[var(--ink)] transition-colors hover:border-[var(--blue)]/40 hover:bg-[var(--blue-lite)] hover:text-[var(--blue)]"
+          >
+            <ChevronLeft className="h-4 w-4" />
+          </button>
+          <button
+            type="button"
+            onClick={() => setSelectedWeekStart(getMondayWeekStart(today))}
+            className="h-9 rounded-[8px] border border-[var(--line)] bg-[var(--surface)] px-3.5 text-[12px] font-bold text-[var(--ink)] hover:bg-[var(--surface-2)]"
+          >
+            {formatShortDate(review.weekStart)} – {formatShortDate(review.weekEnd)}
+          </button>
+          <button
+            type="button"
+            onClick={() => setSelectedWeekStart((w) => addDaysIso(w, 7))}
+            aria-label="Next week"
+            className="grid h-9 w-9 place-items-center rounded-[8px] border border-[var(--line)] bg-[var(--surface)] text-[var(--ink)] transition-colors hover:border-[var(--blue)]/40 hover:bg-[var(--blue-lite)] hover:text-[var(--blue)]"
+          >
+            <ChevronRight className="h-4 w-4" />
+          </button>
+        </div>
+      </header>
 
       {notice && (
-        <div className="rounded-lg border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm font-medium text-emerald-900">
+        <div className="rounded-xl border border-[var(--blue)]/30 bg-[var(--blue-lite)] px-4 py-2.5 text-xs font-semibold text-[var(--blue-ink)]">
           {notice}
         </div>
       )}
 
       {error && (
-        <div className="rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm font-medium text-red-800">
+        <div className="rounded-xl border border-red-400/40 bg-red-500/10 px-4 py-2.5 text-xs font-semibold text-red-700 dark:text-red-300">
           {error}
         </div>
       )}
 
-      {/* Deterministic Weekly KPI Strip */}
-      <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
-        <StatTile
-          label="Weekly Running Distance"
-          value={loading ? '...' : formatDistanceKm(review.totalDistanceM)}
-          meta={
-            review.previousWeekDistanceM > 0
-              ? `${review.distanceDeltaM >= 0 ? '+' : ''}${(review.distanceDeltaM / 1000).toFixed(
-                  2
-                )} km vs. prior week`
-              : 'Prior week: 0.00 km'
-          }
-          origin="RECORDED"
-        />
-        <StatTile
-          label="Runs & Aggregate Pace"
-          value={
-            loading
-              ? '...'
-              : review.runCount > 0
-              ? `${review.runCount} (${formatPace(review.totalDistanceM, review.totalDurationS)})`
-              : '0 runs'
-          }
-          meta={
-            review.totalDurationS > 0
-              ? `${formatDurationSeconds(review.totalDurationS)} total · Longest ${formatDistanceKm(
-                  review.longestRunM
-                )}`
-              : 'No runs logged this week'
-          }
-          origin={review.runCount > 0 ? 'CALCULATED' : 'MISSING'}
-        />
-        <StatTile
-          label="Plan Adherence"
-          value={
-            loading
-              ? '...'
-              : review.adherencePct !== null
-              ? `${review.adherencePct}%`
-              : 'No Plan'
-          }
-          meta={
-            review.plannedRunsCount > 0
-              ? `${review.completedPlannedCount}/${review.plannedRunsCount} planned runs done`
-              : 'No planned runs in this window'
-          }
-          origin={review.adherencePct !== null ? 'CALCULATED' : 'MISSING'}
-        />
-        <StatTile
-          label="Avg Readiness"
-          value={
-            loading
-              ? '...'
-              : review.avgReadinessScore !== null
-              ? `${review.avgReadinessScore}/100`
-              : 'Missing'
-          }
-          meta={`${review.checkInCount} check-in(s) · ${review.painDaysCount} pain day(s)`}
-          origin={review.avgReadinessScore !== null ? 'CALCULATED' : 'MISSING'}
-        />
-      </div>
-
-      {/* Highlights, Watchouts & Non-Running Load */}
-      <div className="grid gap-6 lg:grid-cols-2">
-        <Card className="p-5">
-          <div className="flex items-center justify-between border-b border-slate-100 pb-3">
-            <h2 className="text-sm font-semibold text-slate-900">Deterministic Audit</h2>
-            <ProvenanceBadge origin="CALCULATED" />
+      {/* Clean 3-Column Studio Metric Strip */}
+      <div className="grid grid-cols-1 divide-y divide-[var(--line)] rounded-[15px] border border-[var(--line)] bg-[var(--surface)] sm:grid-cols-3 sm:divide-x sm:divide-y-0">
+        <div className="px-6 py-5">
+          <span className="text-[10px] font-bold uppercase tracking-[0.11em] text-[var(--muted)]">
+            RUNNING DISTANCE
+          </span>
+          <div className="mt-2 font-mono text-[32px] font-bold leading-none tracking-[-0.06em] text-[var(--blue)] tabular-nums">
+            {loading ? '—' : (review.totalDistanceM / 1000).toFixed(1)}
+            <small className="ml-1.5 font-sans text-[14px] font-medium text-[var(--muted)]">
+              km
+            </small>
           </div>
-
-          <div className="mt-4 space-y-4 text-sm">
-            <div>
-              <div className="flex items-center gap-1.5 text-xs font-semibold uppercase tracking-wider text-emerald-700">
-                <CheckCircle2 className="h-3.5 w-3.5" />
-                <span>Highlights</span>
-              </div>
-              {review.highlights.length === 0 ? (
-                <p className="mt-1.5 text-xs text-slate-500">No running highlights recorded yet.</p>
-              ) : (
-                <ul className="mt-1.5 space-y-1.5 text-xs text-slate-700">
-                  {review.highlights.map((h, i) => (
-                    <li key={i}>• {h}</li>
-                  ))}
-                </ul>
-              )}
-            </div>
-
-            <div className="border-t border-slate-100 pt-3">
-              <div className="flex items-center gap-1.5 text-xs font-semibold uppercase tracking-wider text-amber-700">
-                <AlertTriangle className="h-3.5 w-3.5" />
-                <span>Watchouts</span>
-              </div>
-              {review.watchouts.length === 0 ? (
-                <p className="mt-1.5 text-xs text-slate-500">
-                  No load spikes, pain flags, or recovery warnings detected.
-                </p>
-              ) : (
-                <ul className="mt-1.5 space-y-1.5 text-xs text-slate-700">
-                  {review.watchouts.map((w, i) => (
-                    <li key={i}>• {w}</li>
-                  ))}
-                </ul>
-              )}
-            </div>
-          </div>
-        </Card>
-
-        <Card className="p-5">
-          <div className="flex items-center justify-between border-b border-slate-100 pb-3">
-            <h2 className="text-sm font-semibold text-slate-900">
-              Non-Running Load (Isolated from Running km)
-            </h2>
-            <CategoryBadge category="KARATE" />
-          </div>
-
-          <dl className="mt-3 divide-y divide-slate-100 text-sm">
-            <div className="flex items-center justify-between py-2.5">
-              <dt className="text-slate-600">Karate Sessions</dt>
-              <dd className="font-mono font-semibold text-slate-900 tabular-nums">
-                {review.karateSessionsCount} ({review.karateMinutes} min)
-              </dd>
-            </div>
-            <div className="flex items-center justify-between py-2.5">
-              <dt className="text-slate-600">Protected Rest / Recovery Days</dt>
-              <dd className="font-mono font-semibold text-slate-900 tabular-nums">
-                {review.recoveryDaysCount}
-              </dd>
-            </div>
-            <div className="flex items-center justify-between py-2.5">
-              <dt className="text-slate-600">Vocal, Drumming &amp; University Blocks</dt>
-              <dd className="font-mono font-semibold text-slate-900 tabular-nums">
-                {review.otherCommitmentsCount}
-              </dd>
-            </div>
-          </dl>
-        </Card>
-      </div>
-
-      {/* Cached AI Narrative Review */}
-      <Card className="p-5">
-        <div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-100 pb-3">
-          <div className="flex items-center gap-2">
-            <Sparkles className="h-4 w-4 text-blue-700" />
-            <h2 className="text-sm font-semibold text-slate-900">
-              Optional Cached AI Narrative Review
-            </h2>
-            <ProvenanceBadge origin={savedRecord?.ai_narrative ? 'SUGGESTED' : 'MISSING'} />
-          </div>
-          <Button
-            variant="secondary"
-            disabled={!canCallGemini || generatingAi}
-            onClick={() => void handleGenerateAiNarrative()}
-          >
-            <Sparkles className="h-3.5 w-3.5" />
-            <span>
-              {generatingAi
-                ? 'Generating...'
-                : savedRecord?.ai_narrative
-                ? 'Refresh AI Review'
-                : 'Generate AI Review'}
-            </span>
-          </Button>
+          <span className="mt-1.5 block text-[11.5px] text-[var(--muted)]">
+            Previous week: {(review.previousWeekDistanceM / 1000).toFixed(1)} km
+          </span>
         </div>
 
-        {savedRecord?.ai_narrative ? (
-          <div className="mt-4 space-y-2">
-            <div className="whitespace-pre-wrap text-sm leading-relaxed text-slate-800">
-              {savedRecord.ai_narrative}
+        <div className="px-6 py-5">
+          <span className="text-[10px] font-bold uppercase tracking-[0.11em] text-[var(--muted)]">
+            RUNS COMPLETED
+          </span>
+          <div className="mt-2 font-mono text-[32px] font-bold leading-none tracking-[-0.06em] text-[var(--ink)] tabular-nums">
+            {loading ? '—' : review.runCount}
+          </div>
+          <span className="mt-1.5 block text-[11.5px] text-[var(--muted)]">
+            {review.runCount > 0
+              ? `Average ${formatPace(review.totalDistanceM, review.totalDurationS)}`
+              : 'No runs this week'}
+          </span>
+        </div>
+
+        <div className="px-6 py-5">
+          <span className="text-[10px] font-bold uppercase tracking-[0.11em] text-[var(--muted)]">
+            READINESS &amp; ADHERENCE
+          </span>
+          <div className="mt-2 font-mono text-[32px] font-bold leading-none tracking-[-0.06em] text-[var(--ink)] tabular-nums">
+            {loading
+              ? '—'
+              : review.avgReadinessScore !== null
+                ? `${review.avgReadinessScore}/100`
+                : '—'}
+          </div>
+          <span className="mt-1.5 block text-[11.5px] text-[var(--muted)]">
+            {review.adherencePct !== null
+              ? `${review.adherencePct}% plan adherence`
+              : `${review.checkInCount} check-in(s) logged`}
+          </span>
+        </div>
+      </div>
+
+      {/* Two-Column Overview */}
+      <div className="grid items-start gap-5 lg:grid-cols-[1.1fr_0.9fr]">
+        <section className="rounded-[15px] border border-[var(--line)] bg-[var(--surface)] p-6">
+          <h2 className="text-[20px] font-bold tracking-[-0.04em] text-[var(--ink)]">
+            This week at a glance
+          </h2>
+          <p className="mt-1 text-[12px] text-[var(--muted)]">
+            Only your recorded activity is counted.
+          </p>
+
+          <div className="mt-4 divide-y divide-[var(--line)] border-t border-[var(--line)] text-[12.5px] text-[var(--muted)]">
+            <div className="flex items-start gap-3 py-3.5">
+              <Route className="mt-0.5 h-4 w-4 shrink-0 text-[var(--blue)]" />
+              <span>
+                {review.runCount > 0
+                  ? `You completed ${review.runCount} run(s) totalling ${(
+                      review.totalDistanceM / 1000
+                    ).toFixed(1)} km.`
+                  : 'No completed runs were recorded for this week.'}
+              </span>
             </div>
-            <div className="font-mono text-[11px] text-slate-400">
-              Cached model: {savedRecord.ai_model ?? 'gemini'} · Saved{' '}
-              {savedRecord.updated_at.slice(0, 10)}
+            <div className="flex items-start gap-3 py-3.5">
+              <Calendar className="mt-0.5 h-4 w-4 shrink-0 text-[var(--blue)]" />
+              <span>
+                {review.plannedRunsCount > 0
+                  ? `${review.completedPlannedCount} of ${review.plannedRunsCount} planned runs marked complete.`
+                  : 'No running workouts were planned for this week.'}
+              </span>
+            </div>
+            <div className="flex items-start gap-3 py-3.5">
+              <HeartPulse className="mt-0.5 h-4 w-4 shrink-0 text-[var(--blue)]" />
+              <span>
+                {review.checkInCount > 0
+                  ? `${review.checkInCount} readiness check-in(s) logged · ${review.painDaysCount} pain day(s).`
+                  : 'No readiness check-ins recorded for this week.'}
+              </span>
+            </div>
+            {review.watchouts.length > 0 && (
+              <div className="flex items-start gap-3 py-3.5 text-amber-700 dark:text-amber-300">
+                <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
+                <span>{review.watchouts.join(' · ')}</span>
+              </div>
+            )}
+          </div>
+        </section>
+
+        <aside className="rounded-[15px] border border-[var(--line)] bg-[var(--surface)] p-6">
+          <h2 className="text-[20px] font-bold tracking-[-0.04em] text-[var(--ink)]">
+            Outside running
+          </h2>
+          <p className="mt-1 text-[12px] text-[var(--muted)]">
+            Your other commitments matter too.
+          </p>
+
+          <div className="mt-4 divide-y divide-[var(--line)] border-t border-[var(--line)] text-[12.5px]">
+            <div className="flex items-center justify-between py-3.5 text-[var(--muted)]">
+              <span>Karate</span>
+              <b className="font-mono text-[var(--ink)]">
+                {review.karateSessionsCount} ({review.karateMinutes} min)
+              </b>
+            </div>
+            <div className="flex items-center justify-between py-3.5 text-[var(--muted)]">
+              <span>Recovery blocks</span>
+              <b className="font-mono text-[var(--ink)]">{review.recoveryDaysCount}</b>
+            </div>
+            <div className="flex items-center justify-between py-3.5 text-[var(--muted)]">
+              <span>Music &amp; university blocks</span>
+              <b className="font-mono text-[var(--ink)]">{review.otherCommitmentsCount}</b>
             </div>
           </div>
-        ) : (
-          <p className="mt-3 text-xs text-slate-500">
-            {canCallGemini
-              ? 'No AI narrative cached for this week yet. Click "Generate AI Review" to create and cache one in Supabase.'
-              : 'Enable AI coaching and acknowledge privacy settings on the Settings page to generate optional narrative reviews.'}
-          </p>
-        )}
-      </Card>
+
+          <div className="mt-4 border-t border-[var(--line)] pt-4">
+            <Link
+              to="/calendar"
+              className="inline-flex items-center gap-1.5 text-[12px] font-semibold text-[var(--blue)] hover:underline"
+            >
+              <span>View your calendar</span>
+              <ArrowRight className="h-3.5 w-3.5" />
+            </Link>
+          </div>
+        </aside>
+      </div>
 
       {/* Personal Reflection */}
-      <Card className="p-5">
-        <div className="flex items-center justify-between border-b border-slate-100 pb-3">
-          <h2 className="text-sm font-semibold text-slate-900">Athlete Weekly Reflection</h2>
-          <ProvenanceBadge origin={savedRecord?.user_reflection ? 'RECORDED' : 'MISSING'} />
+      <section className="rounded-[15px] border border-[var(--line)] bg-[var(--surface)] p-6">
+        <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
+          <div>
+            <h2 className="text-[20px] font-bold tracking-[-0.04em] text-[var(--ink)]">
+              Your reflection
+            </h2>
+            <p className="mt-0.5 text-[12px] text-[var(--muted)]">
+              One small note can make next week better.
+            </p>
+          </div>
+          <button
+            type="button"
+            disabled={saving}
+            onClick={() => void handleSaveReflection()}
+            className="inline-flex h-10 items-center gap-2 rounded-[9px] border border-[var(--blue)]/35 bg-[var(--blue-lite)] px-4 text-[12.5px] font-bold text-[var(--blue-ink)] transition-opacity hover:opacity-90 disabled:opacity-50"
+          >
+            <Check className="h-4 w-4" />
+            <span>{saving ? 'Saving...' : 'Save reflection'}</span>
+          </button>
         </div>
+
         <textarea
           rows={4}
           value={reflection}
           onChange={(e) => setReflection(e.target.value)}
-          placeholder="How did your legs feel after Karate? What worked well with sleep, pacing, or university scheduling this week?"
-          className="mt-3 w-full rounded-lg border border-slate-300 bg-white p-3 text-sm text-slate-900 focus:border-blue-600 focus:outline-none"
+          placeholder="How did you feel? What would you adjust next week?"
+          className="w-full rounded-[10px] border border-[var(--line)] bg-[var(--surface-2)] p-4 text-[13px] leading-relaxed text-[var(--ink)] placeholder:text-[var(--faint)] focus:border-[var(--blue)] focus:outline-none"
         />
-        <div className="mt-3 flex justify-end">
-          <Button onClick={() => void handleSaveReflection()} disabled={saving}>
-            <Save className="h-4 w-4" />
-            <span>{saving ? 'Saving...' : 'Save Weekly Snapshot & Reflection'}</span>
-          </Button>
+      </section>
+
+      {/* AI Narrative Summary */}
+      <section className="rounded-[15px] border border-[var(--line)] bg-[var(--surface)] p-6">
+        <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
+          <div>
+            <h2 className="text-[20px] font-bold tracking-[-0.04em] text-[var(--ink)]">
+              Summary for next week
+            </h2>
+            <p className="mt-0.5 text-[12px] text-[var(--muted)]">
+              Optional AI narrative cached in Supabase from your recorded data.
+            </p>
+          </div>
+          <button
+            type="button"
+            disabled={!canCallGemini || generatingAi}
+            onClick={() => void handleGenerateAiNarrative()}
+            className="inline-flex h-10 items-center gap-2 rounded-[9px] bg-[var(--blue)] px-4 text-[12.5px] font-bold text-[var(--blue-btn-text)] transition-opacity hover:opacity-90 disabled:opacity-45"
+          >
+            <Sparkles className="h-4 w-4" />
+            <span>
+              {generatingAi
+                ? 'Generating...'
+                : savedRecord?.ai_narrative
+                  ? 'Refresh summary'
+                  : 'Generate summary'}
+            </span>
+          </button>
         </div>
-      </Card>
+
+        {savedRecord?.ai_narrative ? (
+          <div className="space-y-2 border-t border-[var(--line)] pt-4">
+            <div className="whitespace-pre-wrap text-[13px] leading-[1.8] text-[var(--ink)]">
+              {savedRecord.ai_narrative}
+            </div>
+            <div className="font-mono text-[10.5px] text-[var(--faint)]">
+              {savedRecord.ai_model ?? 'gemini'} · Saved {savedRecord.updated_at.slice(0, 10)}
+            </div>
+          </div>
+        ) : (
+          <p className="text-[12.5px] leading-relaxed text-[var(--muted)]">
+            {canCallGemini
+              ? 'Generate a grounded summary when you are ready.'
+              : 'Enable AI features in Settings to generate an optional weekly narrative.'}
+          </p>
+        )}
+      </section>
     </div>
   );
 }

@@ -6,20 +6,23 @@ import {
   BarChart3,
   Bot,
   CalendarDays,
+  ChevronDown,
   ClipboardCheck,
+  Flame,
+  Music,
   LayoutDashboard,
   LogOut,
-  Menu,
-  Monitor,
   Moon,
   Route,
   Settings,
   Sun,
-  X,
   type LucideIcon,
 } from 'lucide-react';
+import { StrideBrand } from '@/design-system';
+import { FloatingCoachWidget } from '@/components/coach/FloatingCoachWidget';
+import { SessionReminderManager } from '@/components/reminders/SessionReminderManager';
 import { useAuth } from '@/modules/auth/AuthContext';
-import { useTheme, type ThemePreference } from '@/modules/theme/ThemeContext';
+import { useTheme } from '@/modules/theme/ThemeContext';
 import { TRAINING_PHASE_LABELS } from '@/types/domain';
 
 export interface NavItem {
@@ -27,277 +30,266 @@ export interface NavItem {
   label: string;
   shortLabel: string;
   icon: LucideIcon;
-  section: 'training' | 'insights';
+  section: 'primary' | 'secondary';
 }
 
 export const NAV_ITEMS: NavItem[] = [
-  { to: '/', label: 'Overview', shortLabel: 'Today', icon: LayoutDashboard, section: 'training' },
-  { to: '/runs', label: 'Running Log', shortLabel: 'Runs', icon: Route, section: 'training' },
-  { to: '/plan', label: 'Training Plan', shortLabel: 'Plan', icon: ClipboardCheck, section: 'training' },
-  { to: '/calendar', label: 'Calendar', shortLabel: 'Schedule', icon: CalendarDays, section: 'training' },
-  { to: '/analytics', label: 'Analytics', shortLabel: 'Stats', icon: BarChart3, section: 'training' },
-  { to: '/coach', label: 'Coach', shortLabel: 'Coach', icon: Bot, section: 'training' },
-  { to: '/personal-bests', label: 'Personal Bests', shortLabel: 'PBs', icon: Award, section: 'insights' },
-  { to: '/weekly-review', label: 'Weekly Review', shortLabel: 'Review', icon: Activity, section: 'insights' },
-  { to: '/settings', label: 'Settings', shortLabel: 'Settings', icon: Settings, section: 'insights' },
+  { to: '/', label: 'Overview', shortLabel: 'Overview', icon: LayoutDashboard, section: 'primary' },
+  { to: '/runs', label: 'Running', shortLabel: 'Running', icon: Route, section: 'primary' },
+  { to: '/karate', label: 'Karate', shortLabel: 'Karate', icon: Flame, section: 'primary' },
+  { to: '/music', label: 'Music', shortLabel: 'Music', icon: Music, section: 'primary' },
+  { to: '/plan', label: 'Training Plan', shortLabel: 'Plan', icon: ClipboardCheck, section: 'secondary' },
+  { to: '/calendar', label: 'Calendar', shortLabel: 'Calendar', icon: CalendarDays, section: 'primary' },
+  { to: '/analytics', label: 'Analytics', shortLabel: 'Analytics', icon: BarChart3, section: 'secondary' },
+  { to: '/coach', label: 'Coach', shortLabel: 'Coach', icon: Bot, section: 'secondary' },
+  { to: '/personal-bests', label: 'Personal Bests', shortLabel: 'PBs', icon: Award, section: 'secondary' },
+  { to: '/weekly-review', label: 'Weekly Review', shortLabel: 'Review', icon: Activity, section: 'secondary' },
+  { to: '/settings', label: 'Settings', shortLabel: 'Settings', icon: Settings, section: 'secondary' },
 ];
 
-const MOBILE_PRIMARY_PATHS = ['/', '/calendar', '/runs', '/plan', '/coach'];
-
-function ThemeToggleControl() {
-  const { theme, setTheme } = useTheme();
-
-  const options: { value: ThemePreference; label: string; icon: LucideIcon }[] = [
-    { value: 'light', label: 'Light mode (Flomo)', icon: Sun },
-    { value: 'dark', label: 'Dark mode (Morgen)', icon: Moon },
-    { value: 'system', label: 'System theme', icon: Monitor },
-  ];
-
-  return (
-    <div
-      role="group"
-      aria-label="Theme selector"
-      className="inline-flex items-center rounded-lg border border-[#E5EAE7] bg-[#F7F9F8] p-0.5 dark:border-morgen-border dark:bg-morgen-surface"
-    >
-      {options.map(({ value, label, icon: Icon }) => {
-        const active = theme === value;
-        return (
-          <button
-            key={value}
-            type="button"
-            title={label}
-            aria-label={label}
-            aria-pressed={active}
-            onClick={() => setTheme(value)}
-            className={`flex h-7 w-7 items-center justify-center rounded-md transition-colors ${
-              active
-                ? 'bg-white text-[#176D3E] shadow-sm dark:bg-morgen-elevated dark:text-morgen-red'
-                : 'text-[#747C84] hover:text-[#161C19] dark:text-morgen-muted dark:hover:text-white'
-            }`}
-          >
-            <Icon className="h-3.5 w-3.5" />
-          </button>
-        );
-      })}
-    </div>
-  );
-}
+const PRIMARY_ORDER = ['/', '/calendar', '/runs', '/karate', '/music'];
 
 export function AppShell({ children }: { children: ReactNode }) {
   const { pathname } = useLocation();
   const { user, profile, signOut } = useAuth();
-  const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
+  const { resolvedTheme, toggleTheme } = useTheme();
+  const [moreOpen, setMoreOpen] = useState(false);
+  const [profileOpen, setProfileOpen] = useState(false);
+
+  const primaryNav = PRIMARY_ORDER.map((path) => NAV_ITEMS.find((i) => i.to === path)).filter((i): i is NavItem => Boolean(i));
+  const secondaryNav = NAV_ITEMS.filter((i) => i.section === 'secondary');
 
   const tz = profile?.timezone ?? 'Asia/Colombo';
   const activePhase = profile?.current_phase ?? 'REBUILDING';
-
-  const currentNav =
-    NAV_ITEMS.find((item) =>
-      item.to === '/' ? pathname === '/' : pathname.startsWith(item.to)
-    ) ?? NAV_ITEMS[0];
-
-  const trainingNav = NAV_ITEMS.filter((i) => i.section === 'training');
-  const insightsNav = NAV_ITEMS.filter((i) => i.section === 'insights');
-  const mobileBarItems = NAV_ITEMS.filter((i) => MOBILE_PRIMARY_PATHS.includes(i.to));
+  const displayName = profile?.display_name || user?.email?.split('@')[0] || 'Athlete';
+  const initial = displayName.charAt(0).toUpperCase() || 'A';
 
   function isActive(to: string) {
     return to === '/' ? pathname === '/' : pathname.startsWith(to);
   }
 
-  const sidebarContent = (
-    <div className="flex h-full flex-col bg-white dark:bg-morgen-black">
-      {/* Brand */}
-      <div className="flex items-center justify-between border-b border-[#E5EAE7] px-4 py-4 dark:border-morgen-border">
-        <Link to="/" className="flex items-center gap-2.5" onClick={() => setMobileMenuOpen(false)}>
-          <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-[#176D3E] text-[#2CCC74] dark:bg-morgen-wine dark:text-morgen-red">
-            <Activity className="h-5 w-5" />
-          </div>
-          <div>
-            <div className="font-display text-sm font-bold tracking-tight text-[#161C19] dark:font-sans dark:text-white">
-              Running Rebuild
-            </div>
-            <div className="font-mono text-[11px] text-flomo-slate dark:text-morgen-muted">{tz}</div>
-          </div>
-        </Link>
-        <button
-          type="button"
-          onClick={() => setMobileMenuOpen(false)}
-          aria-label="Close navigation"
-          className="rounded-lg p-1.5 text-[#747C84] hover:bg-[#F7F9F8] dark:text-morgen-muted dark:hover:bg-morgen-elevated lg:hidden"
-        >
-          <X className="h-5 w-5" />
-        </button>
-      </div>
-
-      {/* Active Phase Card */}
-      <div className="px-4 pt-4">
-        <div className="rounded-lg border border-[#E5EAE7] bg-[#F7F9F8] px-3 py-2.5 dark:border-morgen-border dark:bg-morgen-surface">
-          <div className="flex items-center justify-between">
-            <span className="text-[10px] font-semibold uppercase tracking-wider text-flomo-slate dark:text-morgen-muted">
-              Active Phase
-            </span>
-            <span className="h-1.5 w-1.5 rounded-full bg-[#2CCC74] dark:bg-morgen-yellow" />
-          </div>
-          <div className="mt-0.5 text-xs font-semibold text-[#161C19] dark:text-white">
-            {TRAINING_PHASE_LABELS[activePhase]}
-          </div>
-        </div>
-      </div>
-
-      {/* Navigation Sections */}
-      <nav className="flex-1 space-y-5 overflow-y-auto px-3 py-5">
-        <div>
-          <div className="mb-1.5 px-2.5 text-[10px] font-semibold uppercase tracking-wider text-flomo-slate/80 dark:text-morgen-muted">
-            Training &amp; Daily
-          </div>
-          <div className="space-y-0.5">
-            {trainingNav.map((item) => {
-              const Icon = item.icon;
-              const active = isActive(item.to);
-              return (
-                <Link
-                  key={item.to}
-                  to={item.to}
-                  onClick={() => setMobileMenuOpen(false)}
-                  className={`flex items-center gap-2.5 rounded-lg px-2.5 py-2 text-sm font-medium transition-colors ${
-                    active
-                      ? 'bg-[#176D3E] text-white dark:bg-morgen-elevated dark:text-white dark:ring-1 dark:ring-morgen-border'
-                      : 'text-[#525C57] hover:bg-[#F7F9F8] hover:text-[#161C19] dark:text-morgen-body/80 dark:hover:bg-morgen-surface dark:hover:text-white'
-                  }`}
-                >
-                  <Icon
-                    className={`h-4 w-4 shrink-0 ${
-                      active ? 'text-[#2CCC74] dark:text-morgen-red' : ''
-                    }`}
-                  />
-                  <span>{item.label}</span>
-                </Link>
-              );
-            })}
-          </div>
-        </div>
-
-        <div>
-          <div className="mb-1.5 px-2.5 text-[10px] font-semibold uppercase tracking-wider text-flomo-slate/80 dark:text-morgen-muted">
-            Insights &amp; Account
-          </div>
-          <div className="space-y-0.5">
-            {insightsNav.map((item) => {
-              const Icon = item.icon;
-              const active = isActive(item.to);
-              return (
-                <Link
-                  key={item.to}
-                  to={item.to}
-                  onClick={() => setMobileMenuOpen(false)}
-                  className={`flex items-center gap-2.5 rounded-lg px-2.5 py-2 text-sm font-medium transition-colors ${
-                    active
-                      ? 'bg-[#176D3E] text-white dark:bg-morgen-elevated dark:text-white dark:ring-1 dark:ring-morgen-border'
-                      : 'text-[#525C57] hover:bg-[#F7F9F8] hover:text-[#161C19] dark:text-morgen-body/80 dark:hover:bg-morgen-surface dark:hover:text-white'
-                  }`}
-                >
-                  <Icon
-                    className={`h-4 w-4 shrink-0 ${
-                      active ? 'text-[#2CCC74] dark:text-morgen-red' : ''
-                    }`}
-                  />
-                  <span>{item.label}</span>
-                </Link>
-              );
-            })}
-          </div>
-        </div>
-      </nav>
-
-      {/* Account Footer */}
-      <div className="border-t border-[#E5EAE7] p-4 dark:border-morgen-border">
-        <div className="truncate text-xs font-semibold text-[#161C19] dark:text-white">
-          {profile?.display_name || user?.email?.split('@')[0] || 'Athlete'}
-        </div>
-        <div className="truncate text-[11px] text-flomo-slate dark:text-morgen-muted">
-          {user?.email}
-        </div>
-        <button
-          type="button"
-          onClick={() => void signOut()}
-          className="mt-3 flex w-full items-center gap-2 rounded-lg px-2 py-1.5 text-xs font-medium text-[#525C57] transition-colors hover:bg-[#F7F9F8] hover:text-[#161C19] dark:text-morgen-body/80 dark:hover:bg-morgen-surface dark:hover:text-white"
-        >
-          <LogOut className="h-3.5 w-3.5" />
-          <span>Sign out</span>
-        </button>
-      </div>
-    </div>
-  );
+  const isSecondaryActive = secondaryNav.some((item) => isActive(item.to));
+  const isCalendar = pathname.startsWith('/calendar');
+  const isCoach = pathname.startsWith('/coach');
 
   return (
-    <div className="flex min-h-screen bg-white text-[#161C19] dark:bg-morgen-black dark:text-white">
-      {/* Desktop Sidebar */}
-      <aside className="hidden w-56 shrink-0 border-r border-[#E5EAE7] dark:border-morgen-border lg:block">
-        <div className="sticky top-0 h-screen">{sidebarContent}</div>
-      </aside>
+    <div className="min-h-screen bg-[var(--bg)] text-[var(--ink)]">
+      {/* Stride Sticky Top Navigation Bar */}
+      <header className="sticky top-0 z-30 h-[76px] border-b border-[var(--line)] bg-[var(--surface)]">
+        <div className="relative mx-auto flex h-full max-w-[1250px] items-center justify-between px-5 sm:px-8">
+          <div className="flex h-full items-center gap-10 lg:gap-16">
+            <Link
+              to="/"
+              aria-label="Go to Overview"
+              className="focus-visible:rounded-lg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--blue)]/50"
+            >
+              <StrideBrand />
+            </Link>
 
-      {/* Mobile Drawer Overlay */}
-      {mobileMenuOpen && (
-        <div className="fixed inset-0 z-50 flex lg:hidden">
-          <div
-            className="fixed inset-0 bg-black/60 backdrop-blur-sm"
-            onClick={() => setMobileMenuOpen(false)}
-          />
-          <div className="relative z-10 w-72 max-w-[85vw] border-r border-[#E5EAE7] shadow-xl dark:border-morgen-border">
-            {sidebarContent}
+            {/* Primary 4 Destinations + More Dropdown (Desktop) */}
+            <nav aria-label="Main navigation" className="hidden h-full items-center gap-7 md:flex">
+              {primaryNav.map((item) => {
+                const active = isActive(item.to);
+                return (
+                  <Link
+                    key={item.to}
+                    to={item.to}
+                    className={`relative flex h-full items-center text-[14px] font-semibold transition-colors ${
+                      active
+                        ? 'text-[var(--ink)]'
+                        : 'text-[var(--muted)] hover:text-[var(--ink)]'
+                    }`}
+                  >
+                    {item.label}
+                    {active && (
+                      <span className="absolute inset-x-0 bottom-0 h-[3px] rounded-t-[3px] bg-[var(--ink)]" />
+                    )}
+                  </Link>
+                );
+              })}
+
+              {/* Secondary Tools Dropdown */}
+              <div className="relative flex h-full items-center">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setMoreOpen((v) => !v);
+                    setProfileOpen(false);
+                  }}
+                  className={`relative flex h-full items-center gap-1 text-[14px] font-semibold transition-colors ${
+                    isSecondaryActive
+                      ? 'text-[var(--ink)]'
+                      : 'text-[var(--muted)] hover:text-[var(--ink)]'
+                  }`}
+                >
+                  <span>More</span>
+                  <ChevronDown className="h-3.5 w-3.5 opacity-75" />
+                  {isSecondaryActive && (
+                    <span className="absolute inset-x-0 bottom-0 h-[3px] rounded-t-[3px] bg-[var(--ink)]" />
+                  )}
+                </button>
+
+                {moreOpen && (
+                  <>
+                    <div className="fixed inset-0 z-30" onClick={() => setMoreOpen(false)} />
+                    <div className="absolute left-0 top-[68px] z-40 w-52 rounded-2xl border border-[var(--line)] bg-[var(--surface)] p-1.5 shadow-[var(--shadow)]">
+                      {secondaryNav.map((item) => {
+                        const Icon = item.icon;
+                        const active = isActive(item.to);
+                        return (
+                          <Link
+                            key={item.to}
+                            to={item.to}
+                            onClick={() => setMoreOpen(false)}
+                            className={`flex items-center gap-2.5 rounded-xl px-3 py-2 text-[13px] font-medium transition-colors ${
+                              active
+                                ? 'bg-[var(--blue-lite)] font-semibold text-[var(--blue-ink)]'
+                                : 'text-[var(--ink)] hover:bg-[var(--surface-2)]'
+                            }`}
+                          >
+                            <Icon className="h-4 w-4 shrink-0 opacity-80" />
+                            <span>{item.label}</span>
+                          </Link>
+                        );
+                      })}
+                    </div>
+                  </>
+                )}
+              </div>
+            </nav>
           </div>
-        </div>
-      )}
 
-      {/* Main Content Area */}
-      <div className="flex min-w-0 flex-1 flex-col">
-        <header className="sticky top-0 z-30 flex h-14 items-center justify-between border-b border-[#E5EAE7] bg-white/95 px-4 backdrop-blur dark:border-morgen-border dark:bg-morgen-black/95 sm:px-6 lg:px-8">
+          {/* Right Utility Actions */}
           <div className="flex items-center gap-3">
+            <span className="hidden text-[10px] font-bold uppercase tracking-[0.11em] text-[var(--faint)] lg:inline">
+              {TRAINING_PHASE_LABELS[activePhase]}
+            </span>
+
             <button
               type="button"
-              onClick={() => setMobileMenuOpen(true)}
-              aria-label="Open menu"
-              className="rounded-lg border border-[#E5EAE7] p-1.5 text-[#161C19] hover:bg-[#F7F9F8] dark:border-morgen-border dark:text-morgen-body dark:hover:bg-morgen-surface lg:hidden"
+              onClick={toggleTheme}
+              title={`Switch to ${resolvedTheme === 'light' ? 'dark' : 'light'} mode`}
+              aria-label="Switch theme"
+              className="flex h-9 w-9 items-center justify-center rounded-xl border border-[var(--line)] bg-[var(--surface)] text-[var(--muted)] transition-colors hover:bg-[var(--surface-2)] hover:text-[var(--ink)]"
             >
-              <Menu className="h-4 w-4" />
+              {resolvedTheme === 'light' ? (
+                <Moon className="h-[18px] w-[18px]" />
+              ) : (
+                <Sun className="h-[18px] w-[18px]" />
+              )}
             </button>
-            <span className="font-mono text-xs font-semibold uppercase tracking-wider text-flomo-slate dark:text-morgen-muted">
-              {currentNav.label}
-            </span>
+
+            <div className="relative">
+              <button
+                type="button"
+                onClick={() => {
+                  setProfileOpen((v) => !v);
+                  setMoreOpen(false);
+                }}
+                title={displayName}
+                aria-label="Open profile menu"
+                className="flex h-9 w-9 items-center justify-center rounded-full bg-[var(--blue-lite)] text-[13px] font-extrabold text-[var(--blue-ink)] transition-opacity hover:opacity-90"
+              >
+                {initial}
+              </button>
+
+              {profileOpen && (
+                <>
+                  <div className="fixed inset-0 z-30" onClick={() => setProfileOpen(false)} />
+                  <div className="absolute right-0 top-[54px] z-40 w-60 rounded-2xl border border-[var(--line)] bg-[var(--surface)] p-4 shadow-[var(--shadow)]">
+                    <div className="truncate text-[13px] font-bold text-[var(--ink)]">
+                      {displayName}
+                    </div>
+                    <div className="mt-0.5 truncate text-[12px] text-[var(--muted)]">
+                      {user?.email}
+                    </div>
+                    <div className="mt-2 inline-flex items-center gap-1.5 rounded-md bg-[var(--surface-2)] px-2 py-1 font-mono text-[10px] font-semibold text-[var(--muted)]">
+                      {tz} · {TRAINING_PHASE_LABELS[activePhase]}
+                    </div>
+
+                    {/* Quick access to secondary pages on mobile */}
+                    <div className="mt-3 space-y-0.5 border-t border-[var(--line)] pt-2.5 md:hidden">
+                      {secondaryNav.map((item) => {
+                        const Icon = item.icon;
+                        return (
+                          <Link
+                            key={item.to}
+                            to={item.to}
+                            onClick={() => setProfileOpen(false)}
+                            className="flex items-center gap-2 rounded-lg px-2 py-1.5 text-[12px] font-medium text-[var(--ink)] hover:bg-[var(--surface-2)]"
+                          >
+                            <Icon className="h-3.5 w-3.5 text-[var(--muted)]" />
+                            <span>{item.label}</span>
+                          </Link>
+                        );
+                      })}
+                    </div>
+
+                    <div className="mt-3 flex flex-col gap-1.5 border-t border-[var(--line)] pt-3">
+                      <Link
+                        to="/settings"
+                        onClick={() => setProfileOpen(false)}
+                        className="flex items-center gap-2 rounded-lg border border-[var(--line)] bg-[var(--surface-2)] px-3 py-2 text-[12px] font-semibold text-[var(--ink)] hover:opacity-90"
+                      >
+                        <Settings className="h-3.5 w-3.5" />
+                        <span>Settings</span>
+                      </Link>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setProfileOpen(false);
+                          void signOut();
+                        }}
+                        className="flex items-center gap-2 rounded-lg px-3 py-2 text-left text-[12px] font-semibold text-[var(--muted)] hover:bg-[var(--surface-2)] hover:text-[var(--ink)]"
+                      >
+                        <LogOut className="h-3.5 w-3.5" />
+                        <span>Sign out</span>
+                      </button>
+                    </div>
+                  </div>
+                </>
+              )}
+            </div>
           </div>
+        </div>
+      </header>
 
-          <div className="flex items-center gap-3">
-            <span className="hidden rounded-md border border-[#E5EAE7] bg-[#F7F9F8] px-2.5 py-1 font-mono text-[11px] font-medium text-[#525C57] dark:border-morgen-border dark:bg-morgen-surface dark:text-morgen-body sm:inline-flex">
-              Mon–Sun · {tz}
-            </span>
-            <ThemeToggleControl />
-          </div>
-        </header>
-
-        <main className={`mx-auto w-full flex-1 ${pathname.startsWith('/calendar') ? 'flex h-[calc(100vh-3.5rem)] max-w-none flex-col overflow-hidden p-0 pb-20 lg:pb-0' : 'max-w-[1280px] px-4 py-6 pb-24 sm:px-6 lg:px-8 lg:pb-10'}`}>
-          {children}
-        </main>
-      </div>
-
-      {/* Mobile Floating Bottom Navigation */}
-      <nav
-        aria-label="Mobile quick navigation"
-        className="fixed inset-x-3 bottom-3 z-40 flex items-center justify-around rounded-2xl border border-[#E5EAE7] bg-white/95 px-2 py-1.5 shadow-lg backdrop-blur dark:border-morgen-border dark:bg-morgen-surface/95 lg:hidden"
+      {/* Main Content: Viewport-Locked for Calendar, Editorial Container for Other Pages */}
+      <main
+        className={
+          isCalendar
+            ? 'flex h-[calc(100vh-76px)] w-full flex-col overflow-hidden pb-[72px] md:pb-0'
+            : isCoach
+              ? 'mx-auto flex h-[calc(100vh-76px)] w-full max-w-[1248px] flex-col overflow-hidden px-4 pb-[76px] pt-3 sm:px-6 md:pb-4'
+              : 'mx-auto min-h-[calc(100vh-76px)] w-full max-w-[1248px] px-4 pb-24 pt-4 sm:px-6 md:pb-6'
+        }
       >
-        {mobileBarItems.map((item) => {
+        {children}
+      </main>
+
+      {/* Persistent Bottom-Right AI Coach Launcher & Chatbox */}
+      <SessionReminderManager />
+      <FloatingCoachWidget />
+
+      {/* Stride Mobile Bottom Navigation (4 Primary Tabs) */}
+      <nav
+        aria-label="Mobile navigation"
+        className="fixed inset-x-0 bottom-0 z-30 grid h-[72px] grid-cols-5 border-t border-[var(--line)] bg-[var(--surface)] px-3 py-2 md:hidden"
+      >
+        {primaryNav.map((item) => {
           const Icon = item.icon;
           const active = isActive(item.to);
           return (
             <Link
               key={item.to}
               to={item.to}
-              className={`flex flex-col items-center gap-0.5 rounded-xl px-3 py-1 text-[10px] font-medium transition-colors ${
+              className={`flex flex-col items-center justify-center gap-1 rounded-xl text-[10px] font-semibold transition-colors ${
                 active
-                  ? 'text-[#176D3E] dark:text-morgen-red'
-                  : 'text-flomo-slate hover:text-[#161C19] dark:text-morgen-muted dark:hover:text-white'
+                  ? 'bg-[var(--blue-lite)] text-[var(--blue)]'
+                  : 'text-[var(--faint)] hover:text-[var(--ink)]'
               }`}
             >
-              <Icon className="h-4 w-4" />
+              <Icon className="h-5 w-5" />
               <span>{item.shortLabel}</span>
             </Link>
           );

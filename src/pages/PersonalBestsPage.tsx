@@ -1,6 +1,5 @@
-import { useCallback, useEffect, useMemo, useState, type FormEvent } from 'react';
-import { Award, CheckCircle2, Plus, Target, Trash2, X } from 'lucide-react';
-import { Button, Card, PageHeader, ProvenanceBadge } from '@/design-system';
+﻿import { useCallback, useEffect, useMemo, useState, type FormEvent } from 'react';
+import { ArrowRight, Info, Trash2, X } from 'lucide-react';
 import { formatDurationSeconds, getLocalDateString } from '@/lib/datetime';
 import { useAuth } from '@/modules/auth/AuthContext';
 import { listRunningSessions } from '@/modules/running/repository';
@@ -29,7 +28,6 @@ export function PersonalBestsPage() {
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
 
-  // Modal state for confirming/editing a PB
   const [editingDist, setEditingDist] = useState<BenchmarkDistance | null>(null);
   const [durationStr, setDurationStr] = useState('');
   const [achievedDate, setAchievedDate] = useState(today);
@@ -58,6 +56,15 @@ export function PersonalBestsPage() {
   useEffect(() => {
     void loadData();
   }, [loadData]);
+
+  useEffect(() => {
+    if (!editingDist) return;
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') setEditingDist(null);
+    };
+    window.addEventListener('keydown', onKeyDown);
+    return () => window.removeEventListener('keydown', onKeyDown);
+  }, [editingDist]);
 
   const matrix = useMemo(() => buildBenchmarkMatrix(sessions, pbs), [sessions, pbs]);
 
@@ -100,7 +107,7 @@ export function PersonalBestsPage() {
         notes: notes.trim() ? notes.trim() : null,
       });
       setEditingDist(null);
-      setNotice(`Confirmed ${editingDist} Personal Best saved.`);
+      setNotice(`Confirmed ${editingDist} personal best saved.`);
       await loadData();
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Unable to save Personal Best.');
@@ -113,104 +120,161 @@ export function PersonalBestsPage() {
     if (!user) return;
     if (!window.confirm(`Remove confirmed ${pb.distance_label} Personal Best?`)) return;
     await deletePersonalBest(user.id, pb.id);
-    setNotice(`Removed confirmed ${pb.distance_label} Personal Best.`);
+    setNotice(`Removed confirmed ${pb.distance_label} personal best.`);
     await loadData();
   }
 
   return (
-    <div className="space-y-6">
-      <PageHeader
-        title="Personal Bests & Milestones"
-        subtitle="Strict separation between Confirmed Lifetime PBs, Fastest Logged Runs, Riegel Estimates, and Goal Targets."
-      />
+    <div className="space-y-7 pb-6">
+      {/* Studio Header (Common Default Stride Blue) */}
+      <header>
+        <h1 className="text-[34px] font-bold leading-[1.08] tracking-[-0.055em] text-[var(--ink)] sm:text-[42px]">
+          Every second <em className="not-italic text-[var(--blue)]">counts.</em>
+        </h1>
+      </header>
 
       {notice && (
-        <div className="rounded-lg border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm font-medium text-emerald-900">
+        <div className="rounded-xl border border-[var(--blue)]/30 bg-[var(--blue-lite)] px-4 py-2.5 text-xs font-semibold text-[var(--blue-ink)]">
           {notice}
         </div>
       )}
 
       {error && (
-        <div className="rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm font-medium text-red-800">
+        <div className="rounded-xl border border-red-400/40 bg-red-500/10 px-4 py-2.5 text-xs font-semibold text-red-700 dark:text-red-300">
           {error}
         </div>
       )}
 
-      {/* 5K Milestone Gap Card */}
-      <Card className="p-5">
-        <div className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-100 pb-3">
-          <div className="flex items-center gap-2">
-            <Target className="h-4 w-4 text-blue-700" />
-            <h2 className="text-sm font-semibold text-slate-900">5K Goal Progression</h2>
+      {/* Top 2 Studio Feature Cards */}
+      <div className="grid gap-4 lg:grid-cols-[1.05fr_0.95fr]">
+        <section
+          className="flex min-h-[205px] flex-col rounded-[15px] border border-[var(--line)] p-6"
+          style={{ background: 'color-mix(in srgb, var(--blue) 4%, var(--surface))' }}
+        >
+          <span className="text-[10px] font-bold uppercase tracking-[0.13em] text-[var(--faint)]">
+            FIRST MAJOR GOAL
+          </span>
+          <div className="mt-4 text-[40px] font-bold leading-tight tracking-[-0.06em] text-[var(--ink)] sm:text-[46px]">
+            5K <span className="text-[var(--blue)]">under {formatDurationSeconds(sub20GoalS)}</span>
           </div>
-          <ProvenanceBadge origin={best5kS ? 'CALCULATED' : 'MISSING'} />
+          <p className="mt-1.5 text-[12.5px] text-[var(--muted)]">
+            Long-term goal: {formatDurationSeconds(longTermGoalS)} ({formatPace(5000, longTermGoalS)}).
+          </p>
+          <div className="mt-auto border-t border-[var(--line)] pt-4">
+            <span className="inline-flex items-center gap-2 text-[11.5px] text-[var(--muted)]">
+              <span className="h-2 w-2 rounded-full bg-[var(--blue)]" />
+              {best5kS && best5kS > sub20GoalS
+                ? `${formatDurationSeconds(best5kS - sub20GoalS)} to go from current best`
+                : 'Targets, not recorded results'}
+            </span>
+          </div>
+        </section>
+
+        <section className="flex min-h-[205px] flex-col rounded-[15px] border border-[var(--line)] bg-[var(--surface)] p-6">
+          <span className="text-[10px] font-bold uppercase tracking-[0.13em] text-[var(--faint)]">
+            BEST RECORDED 5 KM
+          </span>
+          <div className="mt-5 font-mono text-[50px] font-bold leading-none tracking-[-0.07em] text-[var(--ink)] tabular-nums">
+            {best5kS ? formatDurationSeconds(best5kS) : '—'}
+          </div>
+          <p className="mt-2.5 text-[12.5px] text-[var(--muted)]">
+            {best5kS
+              ? `${formatPace(5000, best5kS)} · ${
+                  fiveKRow?.confirmedPb?.achieved_date ??
+                  fiveKRow?.fastestLogged?.session.session_date ??
+                  ''
+                }`
+              : 'No exact 5 km result logged yet'}
+          </p>
+          <div className="mt-auto border-t border-[var(--line)] pt-4 text-[11.5px] text-[var(--muted)]">
+            A logged best is never promoted to a lifetime PB without your confirmation.
+          </div>
+        </section>
+      </div>
+
+      {/* Studio Records Table (1K, 3K, 5K, 10K) */}
+      <section className="rounded-[15px] border border-[var(--line)] bg-[var(--surface)] p-6">
+        <div>
+          <h2 className="text-[20px] font-bold tracking-[-0.04em] text-[var(--ink)]">
+            Your distances
+          </h2>
+          <p className="mt-1 text-[12px] text-[var(--muted)]">
+            Confirmed lifetime PBs, fastest logged sessions, and Riegel estimates stay separate.
+          </p>
         </div>
 
-        <div className="mt-4 grid gap-4 sm:grid-cols-3">
-          <div className="rounded-lg border border-slate-200 bg-slate-50 p-3.5">
-            <div className="text-xs font-medium text-slate-500">Current Best Recorded ~5K</div>
-            <div className="mt-1 font-mono text-xl font-bold text-slate-900 tabular-nums">
-              {best5kS ? formatDurationSeconds(best5kS) : 'Missing'}
-            </div>
-            <div className="mt-1 font-mono text-xs text-slate-500">
-              {best5kS ? formatPace(5000, best5kS) : 'Log or confirm a 5K'}
-            </div>
+        {loading ? (
+          <div className="mt-6 border-t border-[var(--line)] py-10 text-center text-sm text-[var(--muted)]">
+            Loading benchmarks...
           </div>
+        ) : (
+          <div className="mt-6 border-t border-[var(--line)]">
+            <div className="hidden grid-cols-[90px_1.2fr_1.1fr_1fr_140px] items-center gap-4 border-b border-[var(--line)] py-3 text-[10px] font-bold uppercase tracking-[0.11em] text-[var(--faint)] md:grid">
+              <span>Distance</span>
+              <span>Confirmed PB</span>
+              <span>Fastest logged</span>
+              <span>Projected eq.</span>
+              <span className="text-right">Action</span>
+            </div>
 
-          <div className="rounded-lg border border-slate-200 bg-slate-50 p-3.5">
-            <div className="text-xs font-medium text-slate-500">
-              First Major Goal (Sub-{formatDurationSeconds(sub20GoalS)})
-            </div>
-            <div className="mt-1 font-mono text-xl font-bold text-blue-700 tabular-nums">
-              {formatDurationSeconds(sub20GoalS)}
-            </div>
-            <div className="mt-1 font-mono text-xs text-slate-600">
-              {best5kS
-                ? best5kS <= sub20GoalS
-                  ? 'Goal achieved'
-                  : `-${formatDurationSeconds(best5kS - sub20GoalS)} to go (${formatPace(
-                      5000,
-                      sub20GoalS
-                    )})`
-                : formatPace(5000, sub20GoalS)}
-            </div>
-          </div>
+            <div className="divide-y divide-[var(--line)]">
+              {matrix.map((row) => (
+                <div
+                  key={row.distance}
+                  className="grid grid-cols-2 items-center gap-3 py-4 text-[13px] md:grid-cols-[90px_1.2fr_1.1fr_1fr_140px] md:gap-4"
+                >
+                  <strong className="font-mono text-[15px] font-bold text-[var(--ink)]">
+                    {row.distance}
+                  </strong>
 
-          <div className="rounded-lg border border-slate-200 bg-slate-50 p-3.5">
-            <div className="text-xs font-medium text-slate-500">Long-Term 5K Goal</div>
-            <div className="mt-1 font-mono text-xl font-bold text-slate-900 tabular-nums">
-              {formatDurationSeconds(longTermGoalS)}
-            </div>
-            <div className="mt-1 font-mono text-xs text-slate-600">
-              {best5kS && best5kS > longTermGoalS
-                ? `-${formatDurationSeconds(best5kS - longTermGoalS)} to go (${formatPace(
-                    5000,
-                    longTermGoalS
-                  )})`
-                : formatPace(5000, longTermGoalS)}
-            </div>
-          </div>
-        </div>
-      </Card>
-
-      {/* Benchmark Matrix (1K, 3K, 5K, 10K) */}
-      {loading ? (
-        <div className="rounded-xl border border-slate-200 bg-white py-12 text-center text-sm text-slate-500">
-          Loading benchmarks...
-        </div>
-      ) : (
-        <div className="grid gap-4 md:grid-cols-2">
-          {matrix.map((row) => (
-            <Card key={row.distance} className="flex flex-col justify-between p-5">
-              <div>
-                <div className="flex items-center justify-between border-b border-slate-100 pb-3">
-                  <div className="flex items-center gap-2">
-                    <Award className="h-4 w-4 text-blue-700" />
-                    <h3 className="font-mono text-base font-bold text-slate-900">{row.distance}</h3>
+                  <div>
+                    <span className="block text-[10px] uppercase text-[var(--faint)] md:hidden">
+                      Confirmed PB
+                    </span>
+                    {row.confirmedPb ? (
+                      <div>
+                        <span className="font-mono font-bold text-[var(--blue)] tabular-nums">
+                          {formatDurationSeconds(row.confirmedPb.duration_s)}
+                        </span>
+                        <span className="ml-2 font-mono text-[11px] text-[var(--muted)]">
+                          {row.confirmedPb.achieved_date}
+                        </span>
+                      </div>
+                    ) : (
+                      <span className="text-[var(--muted)]">Not confirmed</span>
+                    )}
                   </div>
-                  <div className="flex items-center gap-2">
-                    <Button
-                      variant="secondary"
+
+                  <div>
+                    <span className="block text-[10px] uppercase text-[var(--faint)] md:hidden">
+                      Fastest logged
+                    </span>
+                    {row.fastestLogged ? (
+                      <div>
+                        <span className="font-mono font-semibold text-[var(--ink)] tabular-nums">
+                          {formatDurationSeconds(row.fastestLogged.durationS)}
+                        </span>
+                        <span className="ml-2 font-mono text-[11px] text-[var(--muted)]">
+                          {row.fastestLogged.session.session_date}
+                        </span>
+                      </div>
+                    ) : (
+                      <span className="text-[var(--muted)]">—</span>
+                    )}
+                  </div>
+
+                  <div>
+                    <span className="block text-[10px] uppercase text-[var(--faint)] md:hidden">
+                      Projected
+                    </span>
+                    <span className="font-mono text-[var(--muted)] tabular-nums">
+                      {row.estimatedTimeS ? formatDurationSeconds(row.estimatedTimeS) : '—'}
+                    </span>
+                  </div>
+
+                  <div className="col-span-2 flex items-center justify-start gap-1.5 md:col-span-1 md:justify-end">
+                    <button
+                      type="button"
                       onClick={() =>
                         openEditor(
                           row.distance,
@@ -221,189 +285,137 @@ export function PersonalBestsPage() {
                                 sessionId: row.confirmedPb.session_id,
                                 notes: row.confirmedPb.notes,
                               }
-                            : undefined
+                            : row.fastestLogged
+                              ? {
+                                  durationS: row.fastestLogged.durationS,
+                                  date: row.fastestLogged.session.session_date,
+                                  sessionId: row.fastestLogged.session.id,
+                                  notes: `Promoted from logged ${(
+                                    row.fastestLogged.distanceM / 1000
+                                  ).toFixed(2)} km run.`,
+                                }
+                              : undefined
                         )
                       }
+                      className="inline-flex h-8 items-center gap-1.5 rounded-[8px] border border-[var(--blue)]/35 bg-[var(--blue-lite)] px-3 text-[11.5px] font-bold text-[var(--blue-ink)] transition-opacity hover:opacity-90"
                     >
-                      <Plus className="h-3.5 w-3.5" />
                       <span>{row.confirmedPb ? 'Edit PB' : 'Confirm PB'}</span>
-                    </Button>
+                      <ArrowRight className="h-3.5 w-3.5" />
+                    </button>
                     {row.confirmedPb && (
                       <button
                         type="button"
                         onClick={() => void handleDeletePb(row.confirmedPb!)}
                         aria-label={`Delete ${row.distance} PB`}
-                        className="rounded-lg border border-slate-200 p-2 text-slate-500 hover:bg-red-50 hover:text-red-600"
+                        className="grid h-8 w-8 place-items-center rounded-[8px] border border-[var(--line)] text-[var(--muted)] hover:bg-red-500/10 hover:text-red-600 dark:hover:text-red-400"
                       >
                         <Trash2 className="h-3.5 w-3.5" />
                       </button>
                     )}
                   </div>
                 </div>
+              ))}
+            </div>
+          </div>
+        )}
+      </section>
 
-                <dl className="mt-3 divide-y divide-slate-100 text-sm">
-                  <div className="flex items-center justify-between py-2.5">
-                    <dt className="flex items-center gap-2 text-slate-600">
-                      <span>Confirmed Lifetime PB</span>
-                      <ProvenanceBadge origin={row.confirmedPb ? 'RECORDED' : 'MISSING'} />
-                    </dt>
-                    <dd className="text-right font-mono tabular-nums">
-                      {row.confirmedPb ? (
-                        <div>
-                          <span className="font-bold text-slate-900">
-                            {formatDurationSeconds(row.confirmedPb.duration_s)}
-                          </span>
-                          <div className="text-[11px] text-slate-500">
-                            {formatPace(row.confirmedPb.distance_m, row.confirmedPb.duration_s)} ·{' '}
-                            {row.confirmedPb.achieved_date}
-                          </div>
-                        </div>
-                      ) : (
-                        <span className="text-xs text-slate-400">Not confirmed</span>
-                      )}
-                    </dd>
-                  </div>
-
-                  <div className="flex items-center justify-between py-2.5">
-                    <dt className="flex items-center gap-2 text-slate-600">
-                      <span>Fastest Logged Run</span>
-                      <ProvenanceBadge origin={row.fastestLogged ? 'RECORDED' : 'MISSING'} />
-                    </dt>
-                    <dd className="text-right font-mono tabular-nums">
-                      {row.fastestLogged ? (
-                        <div>
-                          <span className="font-semibold text-slate-900">
-                            {formatDurationSeconds(row.fastestLogged.durationS)}
-                          </span>
-                          <div className="text-[11px] text-slate-500">
-                            {(row.fastestLogged.distanceM / 1000).toFixed(2)} km ·{' '}
-                            {row.fastestLogged.session.session_date}
-                          </div>
-                        </div>
-                      ) : (
-                        <span className="text-xs text-slate-400">None logged</span>
-                      )}
-                    </dd>
-                  </div>
-
-                  <div className="flex items-center justify-between py-2.5">
-                    <dt className="flex items-center gap-2 text-slate-600">
-                      <span>Projected Equivalent</span>
-                      <ProvenanceBadge origin={row.estimatedTimeS ? 'ESTIMATED' : 'MISSING'} />
-                    </dt>
-                    <dd className="text-right font-mono tabular-nums">
-                      {row.estimatedTimeS ? (
-                        <div>
-                          <span className="font-semibold text-slate-700">
-                            {formatDurationSeconds(row.estimatedTimeS)}
-                          </span>
-                          <div className="text-[11px] text-slate-400">
-                            {formatPace(row.targetMeters, row.estimatedTimeS)}
-                          </div>
-                        </div>
-                      ) : (
-                        <span className="text-xs text-slate-400">Needs ≥1.5 km run</span>
-                      )}
-                    </dd>
-                  </div>
-                </dl>
-              </div>
-
-              {row.fastestLogged && !row.confirmedPb && (
-                <div className="mt-3 border-t border-slate-100 pt-3">
-                  <button
-                    type="button"
-                    onClick={() =>
-                      openEditor(row.distance, {
-                        durationS: row.fastestLogged!.durationS,
-                        date: row.fastestLogged!.session.session_date,
-                        sessionId: row.fastestLogged!.session.id,
-                        notes: `Promoted from logged ${(row.fastestLogged!.distanceM / 1000).toFixed(
-                          2
-                        )} km run.`,
-                      })
-                    }
-                    className="inline-flex items-center gap-1.5 text-xs font-semibold text-blue-700 hover:underline"
-                  >
-                    <CheckCircle2 className="h-3.5 w-3.5" />
-                    <span>Promote fastest logged run to Confirmed PB</span>
-                  </button>
-                </div>
-              )}
-
-              {row.estimatedBasis && (
-                <p className="mt-2 text-[11px] text-slate-400">{row.estimatedBasis}</p>
-              )}
-            </Card>
-          ))}
-        </div>
-      )}
+      <div className="flex items-start gap-2.5 px-1 text-[11.5px] leading-relaxed text-[var(--muted)]">
+        <Info className="mt-0.5 h-4 w-4 shrink-0" />
+        <p>
+          Projected equivalents use the Riegel formula (1.06) from your recent recorded runs and are
+          never treated as confirmed records.
+        </p>
+      </div>
 
       {/* Confirm / Edit PB Modal */}
       {editingDist && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/45 p-4">
-          <Card className="w-full max-w-md p-6">
-            <div className="flex items-center justify-between border-b border-slate-200 pb-3">
-              <h2 className="text-base font-semibold text-slate-900">
-                Confirm {editingDist} Personal Best
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/55 p-4 backdrop-blur-[2px]"
+          onMouseDown={(e) => {
+            if (e.target === e.currentTarget) setEditingDist(null);
+          }}
+        >
+          <div
+            role="dialog"
+            aria-modal="true"
+            aria-label={`Confirm ${editingDist} Personal Best`}
+            className="w-full max-w-[460px] rounded-2xl border border-[var(--line)] bg-[var(--surface)] p-6 text-[var(--ink)] shadow-2xl"
+          >
+            <div className="flex items-center justify-between border-b border-[var(--line)] pb-3.5">
+              <h2 className="text-[19px] font-bold tracking-[-0.035em] text-[var(--ink)]">
+                Confirm {editingDist} personal best
               </h2>
               <button
                 type="button"
                 onClick={() => setEditingDist(null)}
                 aria-label="Close modal"
-                className="rounded-lg p-1.5 text-slate-500 hover:bg-slate-100"
+                className="grid h-8 w-8 place-items-center rounded-lg text-[var(--muted)] hover:bg-[var(--surface-2)] hover:text-[var(--ink)]"
               >
                 <X className="h-4 w-4" />
               </button>
             </div>
 
-            <form onSubmit={handleSavePb} className="mt-4 space-y-4">
+            <form onSubmit={(e) => void handleSavePb(e)} className="mt-4 space-y-4">
               <div>
-                <label className="block text-xs font-medium text-slate-700">
-                  Official / Confirmed Time (mm:ss or h:mm:ss) *
+                <label className="block text-[11.5px] font-semibold text-[var(--muted)]">
+                  Confirmed time (mm:ss or h:mm:ss) *
                 </label>
                 <input
                   type="text"
                   required
-                  placeholder="28:10"
+                  autoFocus
+                  placeholder="24:30"
                   value={durationStr}
                   onChange={(e) => setDurationStr(e.target.value)}
-                  className="mt-1 block w-full rounded-lg border border-slate-300 bg-white px-3 py-2 font-mono text-sm"
+                  className="mt-1 block w-full rounded-[9px] border border-[var(--line-strong)] bg-[var(--input-bg)] px-3 py-2 font-mono text-[13px] text-[var(--ink)] focus:border-[var(--blue)] focus:outline-none"
                 />
               </div>
 
               <div>
-                <label className="block text-xs font-medium text-slate-700">Date Achieved *</label>
+                <label className="block text-[11.5px] font-semibold text-[var(--muted)]">
+                  Date achieved *
+                </label>
                 <input
                   type="date"
                   required
                   value={achievedDate}
                   onChange={(e) => setAchievedDate(e.target.value)}
-                  className="mt-1 block w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm"
+                  className="mt-1 block w-full rounded-[9px] border border-[var(--line-strong)] bg-[var(--input-bg)] px-3 py-2 font-mono text-[13px] text-[var(--ink)] focus:border-[var(--blue)] focus:outline-none"
                 />
               </div>
 
               <div>
-                <label className="block text-xs font-medium text-slate-700">Notes</label>
+                <label className="block text-[11.5px] font-semibold text-[var(--muted)]">
+                  Notes
+                </label>
                 <input
                   type="text"
                   placeholder="Race, track time trial, GPS watch..."
                   value={notes}
                   onChange={(e) => setNotes(e.target.value)}
-                  className="mt-1 block w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm"
+                  className="mt-1 block w-full rounded-[9px] border border-[var(--line-strong)] bg-[var(--input-bg)] px-3 py-2 text-[13px] text-[var(--ink)] focus:border-[var(--blue)] focus:outline-none"
                 />
               </div>
 
-              <div className="flex justify-end gap-2 border-t border-slate-200 pt-4">
-                <Button type="button" variant="secondary" onClick={() => setEditingDist(null)}>
+              <div className="flex justify-end gap-2 border-t border-[var(--line)] pt-4">
+                <button
+                  type="button"
+                  onClick={() => setEditingDist(null)}
+                  className="h-9 rounded-[9px] border border-[var(--line-strong)] bg-[var(--surface)] px-4 text-[12.5px] font-semibold text-[var(--ink)] hover:bg-[var(--surface-2)]"
+                >
                   Cancel
-                </Button>
-                <Button type="submit" disabled={saving}>
-                  {saving ? 'Saving...' : 'Save Confirmed PB'}
-                </Button>
+                </button>
+                <button
+                  type="submit"
+                  disabled={saving}
+                  className="h-9 rounded-[9px] bg-[var(--blue)] px-4 text-[12.5px] font-bold text-[var(--blue-btn-text)] transition-opacity hover:opacity-90 disabled:opacity-50"
+                >
+                  {saving ? 'Saving...' : 'Save PB'}
+                </button>
               </div>
             </form>
-          </Card>
+          </div>
         </div>
       )}
     </div>

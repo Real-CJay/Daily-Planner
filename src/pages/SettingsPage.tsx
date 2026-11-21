@@ -1,11 +1,30 @@
-import { useEffect, useState, type FormEvent } from 'react';
-import { ShieldCheck } from 'lucide-react';
-import { Button, Card, PageHeader } from '@/design-system';
+﻿import { useCallback, useEffect, useMemo, useState, type FormEvent } from 'react';
+import { Check, Info } from 'lucide-react';
+import { getLocalDateString } from '@/lib/datetime';
 import { supabase } from '@/lib/supabase';
 import { useAuth } from '@/modules/auth/AuthContext';
+import { listScheduleBlocks, listScheduleCompletions } from '@/modules/calendar/repository';
+import {
+  DEFAULT_REMINDER_PREFERENCES,
+  getCurrentLocalMinutes,
+  getUpcomingRemindersForToday,
+  type ReminderPreferences,
+} from '@/modules/reminders/reminderEngine';
+import {
+  getBrowserNotificationPermission,
+  loadFiredReminderKeys,
+  loadReminderPreferences,
+  playGentleChime,
+  saveReminderPreferences,
+} from '@/modules/reminders/storage';
+import { ReminderPreferencesPanel } from '@/modules/reminders/ReminderPreferencesPanel';
+import type { ScheduleBlock, ScheduleCompletion } from '@/types/domain';
 
 export function SettingsPage() {
   const { user, profile, refreshProfile } = useAuth();
+  const tz = profile?.timezone ?? 'Asia/Colombo';
+  const today = getLocalDateString(new Date(), tz);
+
   const [displayName, setDisplayName] = useState('');
   const [timezone, setTimezone] = useState('Asia/Colombo');
   const [aiEnabled, setAiEnabled] = useState(false);
@@ -19,6 +38,16 @@ export function SettingsPage() {
   const [message, setMessage] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
+  // Embedded Session Reminder state
+  const [reminderPrefs, setReminderPrefs] = useState<ReminderPreferences>(
+    DEFAULT_REMINDER_PREFERENCES
+  );
+  const [permission, setPermission] = useState<NotificationPermission | 'unsupported'>(() =>
+    getBrowserNotificationPermission()
+  );
+  const [blocks, setBlocks] = useState<ScheduleBlock[]>([]);
+  const [completions, setCompletions] = useState<ScheduleCompletion[]>([]);
+
   useEffect(() => {
     if (!profile) return;
     setDisplayName(profile.display_name ?? '');
@@ -31,6 +60,73 @@ export function SettingsPage() {
     setShareKarate(profile.ai_share_karate);
     setShareCommitments(profile.ai_share_commitments);
   }, [profile]);
+
+  const loadReminderContext = useCallback(async () => {
+    if (!user) return;
+    setReminderPrefs(loadReminderPreferences(user.id));
+    setPermission(getBrowserNotificationPermission());
+    try {
+      const [bRows, cRows] = await Promise.all([
+        listScheduleBlocks(user.id),
+        listScheduleCompletions(user.id, today, today).catch(() => [] as ScheduleCompletion[]),
+      ]);
+      setBlocks(bRows);
+      setCompletions(cRows);
+    } catch {
+      // Ignore background fetch errors
+    }
+  }, [user, today]);
+
+  useEffect(() => {
+    void loadReminderContext();
+  }, [loadReminderContext]);
+
+  const upcomingPreview = useMemo(() => {
+    if (!user) return [];
+    return getUpcomingRemindersForToday({
+      todayIso: today,
+      nowMinutes: getCurrentLocalMinutes(new Date(), tz),
+      blocks,
+      completions,
+      prefs: reminderPrefs,
+      firedKeys: loadFiredReminderKeys(user.id, today),
+    });
+  }, [user, today, tz, blocks, completions, reminderPrefs]);
+
+  function handleUpdateReminderPrefs(next: ReminderPreferences) {
+    if (!user) return;
+    setReminderPrefs(next);
+    saveReminderPreferences(user.id, next);
+  }
+
+  async function handleRequestBrowserPermission() {
+    if (typeof window === 'undefined' || !('Notification' in window)) {
+      setPermission('unsupported');
+      return;
+    }
+    const result = await window.Notification.requestPermission();
+    setPermission(result);
+    if (result === 'granted' && user) {
+      const next = { ...reminderPrefs, browserNotifications: true };
+      setReminderPrefs(next);
+      saveReminderPreferences(user.id, next);
+    }
+  }
+
+  function handleSendTestAlert() {
+    if (reminderPrefs.soundEnabled) playGentleChime();
+    if (
+      reminderPrefs.browserNotifications &&
+      typeof window !== 'undefined' &&
+      'Notification' in window &&
+      window.Notification.permission === 'granted'
+    ) {
+      new window.Notification('Stride Reminder Test', {
+        body: `Alerts are set for ${reminderPrefs.leadMinutes} min before timed sessions.`,
+      });
+    }
+    setMessage('Test reminder alert dispatched.');
+  }
 
   async function handleSave(e: FormEvent) {
     e.preventDefault();
@@ -70,140 +166,193 @@ export function SettingsPage() {
     setMessage('Settings saved to Supabase.');
   }
 
+  const inputClass =
+    'mt-2 block w-full min-h-[42px] rounded-[9px] border border-[var(--line-strong)] bg-[var(--input-bg)] px-3 py-2 text-[13px] font-medium text-[var(--ink)] focus:border-[var(--blue)] focus:outline-none';
+
   return (
-    <div>
-      <PageHeader
-        title="Settings & AI Privacy Controls"
-        subtitle="Workspace preferences, timezone configuration, and Gemini free-tier controls."
-      />
+    <div className="space-y-7 pb-6">
+      {/* Studio Header (Common Default Stride Blue) */}
+      <header>
+        <h1 className="text-[34px] font-bold leading-[1.08] tracking-[-0.055em] text-[var(--ink)] sm:text-[42px]">
+          Your space, <em className="not-italic text-[var(--blue)]">your rules.</em>
+        </h1>
+      </header>
 
-      <form onSubmit={handleSave} className="max-w-2xl space-y-6">
-        <Card className="p-6">
-          <h2 className="text-base font-semibold text-slate-900">Profile &amp; Calendar Defaults</h2>
-          <div className="mt-4 grid gap-4 sm:grid-cols-2">
-            <div>
-              <label htmlFor="displayName" className="block text-sm font-medium text-slate-700">
-                Display Name
+      {error && (
+        <div className="rounded-xl border border-red-400/40 bg-red-500/10 px-4 py-3 text-xs font-semibold text-red-700 dark:text-red-300">
+          {error}
+        </div>
+      )}
+      {message && (
+        <div className="rounded-xl border border-[var(--blue)]/30 bg-[var(--blue-lite)] px-4 py-3 text-xs font-semibold text-[var(--blue-ink)]">
+          {message}
+        </div>
+      )}
+
+      {/* Studio 2-Column Layout */}
+      <form
+        onSubmit={(e) => void handleSave(e)}
+        className="grid items-start gap-5 lg:grid-cols-[minmax(0,0.82fr)_minmax(0,1.18fr)]"
+      >
+        {/* Left Column: Profile + Reminders */}
+        <div className="space-y-5">
+          <section className="rounded-[15px] border border-[var(--line)] bg-[var(--surface)] p-6 sm:p-7">
+            <h2 className="text-[20px] font-bold tracking-[-0.04em] text-[var(--ink)]">
+              Personal preferences
+            </h2>
+            <p className="mt-1 text-[12px] text-[var(--muted)]">
+              Keep your calendar aligned with your local time.
+            </p>
+
+            <div className="mt-5 space-y-4">
+              <label className="block text-[12px] font-semibold text-[var(--ink)]">
+                Display name
+                <input
+                  id="displayName"
+                  type="text"
+                  value={displayName}
+                  onChange={(e) => setDisplayName(e.target.value)}
+                  className={inputClass}
+                />
               </label>
-              <input
-                id="displayName"
-                type="text"
-                value={displayName}
-                onChange={(e) => setDisplayName(e.target.value)}
-                className="mt-1 block w-full rounded-lg border border-slate-300 px-3 py-2 text-sm focus:border-blue-600 focus:outline-none focus:ring-1 focus:ring-blue-600"
-              />
+
+              <label className="block text-[12px] font-semibold text-[var(--ink)]">
+                Timezone
+                <input
+                  id="timezone"
+                  type="text"
+                  value={timezone}
+                  onChange={(e) => setTimezone(e.target.value)}
+                  className={`${inputClass} font-mono`}
+                />
+              </label>
             </div>
 
-            <div>
-              <label htmlFor="timezone" className="block text-sm font-medium text-slate-700">
-                Timezone (Week starts Monday)
-              </label>
-              <input
-                id="timezone"
-                type="text"
-                value={timezone}
-                onChange={(e) => setTimezone(e.target.value)}
-                className="mt-1 block w-full rounded-lg border border-slate-300 px-3 py-2 font-mono text-sm focus:border-blue-600 focus:outline-none focus:ring-1 focus:ring-blue-600"
-              />
-            </div>
-          </div>
-        </Card>
+            <p className="mt-5 text-[12px] leading-relaxed text-[var(--muted)]">
+              Calendar weeks begin on Monday and sync across Overview, Analytics, and Reviews.
+            </p>
+          </section>
 
-        <Card className="p-6">
-          <div className="flex items-start justify-between gap-4">
+          <section className="rounded-[15px] border border-[var(--line)] bg-[var(--surface)] p-6 sm:p-7">
+            <h2 className="text-[20px] font-bold tracking-[-0.04em] text-[var(--ink)]">
+              Session reminders
+            </h2>
+            <p className="mb-4 mt-1 text-[12px] text-[var(--muted)]">
+              Browser notifications and in-app alerts before timed blocks start.
+            </p>
+            <ReminderPreferencesPanel
+              prefs={reminderPrefs}
+              permission={permission}
+              upcoming={upcomingPreview}
+              onUpdatePrefs={handleUpdateReminderPrefs}
+              onRequestBrowserPermission={handleRequestBrowserPermission}
+              onSendTestAlert={handleSendTestAlert}
+            />
+          </section>
+        </div>
+
+        {/* Right Column: AI & Privacy */}
+        <section className="rounded-[15px] border border-[var(--line)] bg-[var(--surface)] p-6 sm:p-7">
+          <div className="flex items-start justify-between gap-3">
             <div>
-              <h2 className="text-base font-semibold text-slate-900">Gemini AI Configuration</h2>
-              <p className="mt-1 text-sm text-slate-600">
-                All deterministic analytics, logs, and adaptive planning remain fully functional
-                when AI is disabled.
+              <h2 className="text-[20px] font-bold tracking-[-0.04em] text-[var(--ink)]">
+                AI &amp; privacy
+              </h2>
+              <p className="mt-1 text-[12px] text-[var(--muted)]">
+                AI is optional. Your logs, calendar, and plans remain fully usable without it.
               </p>
             </div>
-            <ShieldCheck className="h-5 w-5 shrink-0 text-slate-400" />
+            <span className="rounded-[6px] bg-[var(--surface-2)] px-2.5 py-1 font-mono text-[10px] font-semibold text-[var(--muted)]">
+              {aiEnabled ? 'ENABLED' : 'OPTIONAL'}
+            </span>
           </div>
 
-          <div className="mt-4 rounded-lg border border-amber-200 bg-amber-50 p-3.5 text-xs text-amber-900">
-            <strong>Free-Tier Privacy Disclosure:</strong> Google Gemini Developer API free-tier
-            terms may permit submitted prompts and screenshots to be used by Google for product
-            improvement. Never silently routes to paid endpoints.
+          <div className="mt-5 flex items-start gap-3 rounded-[10px] border border-[var(--line)] bg-[var(--surface-2)] p-4 text-[12px] leading-relaxed text-[var(--muted)]">
+            <Info className="mt-0.5 h-4 w-4 shrink-0 text-[#bc9346]" />
+            <span>
+              Google Gemini Developer API free-tier terms may permit submitted prompts and
+              screenshots to be used for product improvement. Requests never silently route to paid
+              endpoints.
+            </span>
           </div>
 
-          <div className="mt-4 space-y-4">
-            <label className="flex items-start gap-3 text-sm text-slate-700">
+          <div className="mt-5 space-y-3.5">
+            <label className="flex cursor-pointer items-start gap-2.5 text-[12.5px] leading-relaxed text-[var(--ink)]">
               <input
                 type="checkbox"
                 checked={consentAck}
                 onChange={(e) => setConsentAck(e.target.checked)}
-                className="mt-0.5 h-4 w-4 rounded border-slate-300 text-brand-run focus:ring-blue-600"
+                className="mt-1 h-4 w-4 shrink-0 accent-[var(--blue)]"
               />
-              <span>I acknowledge the Gemini free-tier terms and data handling notice.</span>
+              <span>I understand and acknowledge the provider data-handling notice.</span>
             </label>
 
-            <label className="flex items-center gap-3 text-sm font-medium text-slate-900">
+            <label className="flex cursor-pointer items-start gap-2.5 text-[12.5px] font-semibold leading-relaxed text-[var(--ink)]">
               <input
                 type="checkbox"
                 checked={aiEnabled}
                 onChange={(e) => setAiEnabled(e.target.checked)}
-                className="h-4 w-4 rounded border-slate-300 text-brand-run focus:ring-blue-600"
+                className="mt-1 h-4 w-4 shrink-0 accent-[var(--blue)]"
               />
               <span>Enable Gemini AI features (screenshot extraction, run analysis, AI coach)</span>
             </label>
+          </div>
 
-            <div>
-              <label htmlFor="preferredModel" className="block text-sm font-medium text-slate-700">
-                Preferred Gemini Model
-              </label>
-              <input
-                id="preferredModel"
-                type="text"
-                value={preferredModel}
-                onChange={(e) => setPreferredModel(e.target.value)}
-                className="mt-1 block w-full rounded-lg border border-slate-300 px-3 py-2 font-mono text-sm focus:border-blue-600 focus:outline-none focus:ring-1 focus:ring-blue-600"
-              />
-              <p className="mt-1 text-xs text-slate-500">
-                Live model verification against your API project will be wired in Stage 3 &amp; Stage 7.
-              </p>
+          <label className="mt-6 block text-[12px] font-semibold text-[var(--ink)]">
+            Preferred Gemini model
+            <input
+              id="preferredModel"
+              type="text"
+              value={preferredModel}
+              onChange={(e) => setPreferredModel(e.target.value)}
+              className={`${inputClass} font-mono`}
+            />
+            <small className="mt-1.5 block text-[11px] font-normal text-[var(--muted)]">
+              Server-side model preference used by your AI Coach and weekly review endpoints.
+            </small>
+          </label>
+
+          <div className="mt-6 border-t border-[var(--line)] pt-5">
+            <div className="text-[10px] font-bold uppercase tracking-[0.13em] text-[var(--faint)]">
+              INFORMATION YOU ALLOW THE AI TO SEE
             </div>
-
-            <fieldset className="border-t border-slate-200 pt-4">
-              <legend className="text-xs font-semibold uppercase tracking-wider text-slate-500">
-                Context Permitted for Gemini Requests
-              </legend>
-              <div className="mt-3 grid gap-2.5 sm:grid-cols-2">
-                {[
-                  { label: 'Session notes', checked: shareNotes, set: setShareNotes },
-                  { label: 'Recovery check-ins', checked: shareRecovery, set: setShareRecovery },
-                  { label: 'Karate sessions', checked: shareKarate, set: setShareKarate },
-                  { label: 'Schedule commitments', checked: shareCommitments, set: setShareCommitments },
-                ].map((item) => (
-                  <label key={item.label} className="flex items-center gap-2.5 text-sm text-slate-700">
-                    <input
-                      type="checkbox"
-                      checked={item.checked}
-                      onChange={(e) => item.set(e.target.checked)}
-                      className="h-4 w-4 rounded border-slate-300 text-brand-run focus:ring-blue-600"
-                    />
-                    <span>{item.label}</span>
-                  </label>
-                ))}
-              </div>
-            </fieldset>
+            <div className="mt-3 grid gap-2.5 sm:grid-cols-2">
+              {[
+                { label: 'Session notes', checked: shareNotes, set: setShareNotes },
+                { label: 'Readiness check-ins', checked: shareRecovery, set: setShareRecovery },
+                { label: 'Karate sessions', checked: shareKarate, set: setShareKarate },
+                { label: 'Schedule commitments', checked: shareCommitments, set: setShareCommitments },
+              ].map((item) => (
+                <label
+                  key={item.label}
+                  className="flex cursor-pointer items-center gap-2.5 text-[12.5px] text-[var(--ink)]"
+                >
+                  <input
+                    type="checkbox"
+                    checked={item.checked}
+                    onChange={(e) => item.set(e.target.checked)}
+                    className="h-4 w-4 shrink-0 accent-[var(--blue)]"
+                  />
+                  <span>{item.label}</span>
+                </label>
+              ))}
+            </div>
           </div>
-        </Card>
 
-        {error && (
-          <div className="rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
-            {error}
+          <div className="mt-6 flex flex-wrap items-center justify-between gap-3 border-t border-[var(--line)] pt-5">
+            <small className="text-[11px] text-[var(--muted)]">
+              API keys remain server-side only.
+            </small>
+            <button
+              type="submit"
+              disabled={saving}
+              className="inline-flex h-[41px] items-center gap-2 rounded-[9px] bg-[var(--blue)] px-5 text-[12.5px] font-bold text-[var(--blue-btn-text)] transition-opacity hover:opacity-90 disabled:opacity-50"
+            >
+              <Check className="h-4 w-4 stroke-[2.5]" />
+              <span>{saving ? 'Saving...' : 'Save settings'}</span>
+            </button>
           </div>
-        )}
-        {message && (
-          <div className="rounded-lg border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-800">
-            {message}
-          </div>
-        )}
-
-        <Button type="submit" disabled={saving}>
-          {saving ? 'Saving...' : 'Save Settings'}
-        </Button>
+        </section>
       </form>
     </div>
   );

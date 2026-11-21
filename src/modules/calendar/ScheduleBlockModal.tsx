@@ -1,6 +1,6 @@
-﻿import { useState, type FormEvent } from 'react';
+﻿import { useEffect, useState, type FormEvent } from 'react';
 import { X } from 'lucide-react';
-import { Button, Card } from '@/design-system';
+import { Button } from '@/design-system';
 import { ISO_WEEKDAYS } from './scheduleEngine';
 import {
   ACTIVITY_CATEGORY_LABELS,
@@ -39,6 +39,14 @@ export function ScheduleBlockModal({
   const [notes, setNotes] = useState(initialBlock?.notes ?? '');
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') onClose();
+    };
+    window.addEventListener('keydown', onKeyDown);
+    return () => window.removeEventListener('keydown', onKeyDown);
+  }, [onClose]);
 
   function toggleWeekday(isoDay: number) {
     setRecurrenceDays((prev) =>
@@ -84,44 +92,59 @@ export function ScheduleBlockModal({
     }
   }
 
+  const inputClass =
+    'mt-1 block w-full rounded-[9px] border border-[var(--line-strong)] bg-[var(--input-bg)] px-3 py-2 text-[13px] text-[var(--ink)] placeholder:text-[var(--faint)] focus:border-[var(--blue)] focus:outline-none';
+  const labelClass = 'block text-[11.5px] font-semibold text-[var(--muted)]';
+
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center overflow-y-auto bg-slate-900/45 p-4">
-      <Card className="my-auto max-h-[92vh] w-full max-w-xl overflow-y-auto p-6">
-        <div className="flex items-center justify-between border-b border-slate-200 pb-4">
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center bg-black/55 p-4 backdrop-blur-[2px]"
+      onMouseDown={(e) => {
+        if (e.target === e.currentTarget) onClose();
+      }}
+    >
+      <div
+        role="dialog"
+        aria-modal="true"
+        aria-label={initialBlock ? 'Edit Schedule Block' : 'Add Schedule Block'}
+        className="max-h-[92vh] w-full max-w-[560px] overflow-y-auto rounded-2xl border border-[var(--line)] bg-[var(--surface)] p-5 text-[var(--ink)] shadow-2xl sm:p-6"
+      >
+        <div className="flex items-start justify-between gap-3 border-b border-[var(--line)] pb-3.5">
           <div>
-            <h2 className="text-lg font-semibold text-slate-900">
-              {initialBlock ? 'Edit Schedule Block' : 'Add Schedule Block'}
+            <div className="text-[10px] font-bold uppercase tracking-[0.12em] text-[var(--muted)]">
+              {initialBlock ? 'EDIT BLOCK' : 'ADD TO PLANNER'}
+            </div>
+            <h2 className="mt-1 text-[20px] font-bold tracking-[-0.04em] text-[var(--ink)]">
+              {initialBlock ? 'Edit schedule block' : 'Schedule a block'}
             </h2>
-            <p className="text-xs text-slate-500">
-              Non-running commitments stay isolated from running mileage and pace metrics.
-            </p>
           </div>
           <button
             type="button"
             onClick={onClose}
             aria-label="Close modal"
-            className="flex h-9 w-9 items-center justify-center rounded-lg text-slate-500 hover:bg-slate-100"
+            className="flex h-8 w-8 items-center justify-center rounded-lg text-[var(--muted)] transition-colors hover:bg-[var(--surface-2)] hover:text-[var(--ink)]"
           >
-            <X className="h-5 w-5" />
+            <X className="h-4 w-4" />
           </button>
         </div>
 
-        <form onSubmit={handleSubmit} className="mt-5 space-y-4">
-          <div className="grid gap-4 sm:grid-cols-2">
-            <div className="sm:col-span-2">
-              <label className="block text-xs font-medium text-slate-700">Title *</label>
-              <input
-                type="text"
-                required
-                placeholder="e.g. Karate Training, University Lab, Rest Day"
-                value={title}
-                onChange={(e) => setTitle(e.target.value)}
-                className="mt-1 block w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm"
-              />
-            </div>
+        <form onSubmit={handleSubmit} className="mt-4 space-y-3.5">
+          <div>
+            <label className={labelClass}>Title *</label>
+            <input
+              type="text"
+              required
+              autoFocus
+              placeholder="e.g. Karate Training, University Lab, Rest Day"
+              value={title}
+              onChange={(e) => setTitle(e.target.value)}
+              className={inputClass}
+            />
+          </div>
 
+          <div className="grid gap-3 sm:grid-cols-2">
             <div>
-              <label className="block text-xs font-medium text-slate-700">Category</label>
+              <label className={labelClass}>Category</label>
               <select
                 value={category}
                 onChange={(e) => {
@@ -137,7 +160,7 @@ export function ScheduleBlockModal({
                     setPhysicalLoad('MODERATE');
                   }
                 }}
-                className="mt-1 block w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm"
+                className={inputClass}
               >
                 {Object.entries(ACTIVITY_CATEGORY_LABELS).map(([k, label]) => (
                   <option key={k} value={k}>
@@ -148,11 +171,11 @@ export function ScheduleBlockModal({
             </div>
 
             <div>
-              <label className="block text-xs font-medium text-slate-700">Physical Load</label>
+              <label className={labelClass}>Physical Load</label>
               <select
                 value={physicalLoad}
                 onChange={(e) => setPhysicalLoad(e.target.value as PhysicalLoadLevel)}
-                className="mt-1 block w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm"
+                className={inputClass}
               >
                 <option value="NONE">None (Mental / Rest)</option>
                 <option value="LOW">Low</option>
@@ -162,24 +185,22 @@ export function ScheduleBlockModal({
             </div>
 
             <div>
-              <label className="block text-xs font-medium text-slate-700">
-                {isRecurring ? 'Start Date *' : 'Date *'}
-              </label>
+              <label className={labelClass}>{isRecurring ? 'Start Date *' : 'Date *'}</label>
               <input
                 type="date"
                 required
                 value={blockDate}
                 onChange={(e) => setBlockDate(e.target.value)}
-                className="mt-1 block w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm"
+                className={`${inputClass} font-mono`}
               />
             </div>
 
             <div>
-              <label className="block text-xs font-medium text-slate-700">Status</label>
+              <label className={labelClass}>Status</label>
               <select
                 value={status}
                 onChange={(e) => setStatus(e.target.value as ScheduleStatus)}
-                className="mt-1 block w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm"
+                className={inputClass}
               >
                 <option value="PLANNED">Planned</option>
                 <option value="COMPLETED">Completed</option>
@@ -187,35 +208,29 @@ export function ScheduleBlockModal({
                 <option value="RESCHEDULED">Rescheduled</option>
               </select>
             </div>
+          </div>
 
+          <div className="grid grid-cols-3 gap-3">
             <div>
-              <label className="block text-xs font-medium text-slate-700">
-                Start Time (Optional)
-              </label>
+              <label className={labelClass}>Start time</label>
               <input
                 type="time"
                 value={startTime}
                 onChange={(e) => setStartTime(e.target.value)}
-                className="mt-1 block w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm"
+                className={`${inputClass} font-mono`}
               />
             </div>
-
             <div>
-              <label className="block text-xs font-medium text-slate-700">
-                End Time (Optional)
-              </label>
+              <label className={labelClass}>End time</label>
               <input
                 type="time"
                 value={endTime}
                 onChange={(e) => setEndTime(e.target.value)}
-                className="mt-1 block w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm"
+                className={`${inputClass} font-mono`}
               />
             </div>
-
-            <div className="sm:col-span-2">
-              <label className="block text-xs font-medium text-slate-700">
-                Duration (min, optional)
-              </label>
+            <div>
+              <label className={labelClass}>Duration (min)</label>
               <input
                 type="number"
                 min="1"
@@ -223,24 +238,24 @@ export function ScheduleBlockModal({
                 placeholder="60"
                 value={durationMin}
                 onChange={(e) => setDurationMin(e.target.value)}
-                className="mt-1 block w-full rounded-lg border border-slate-300 bg-white px-3 py-2 font-mono text-sm"
+                className={`${inputClass} font-mono`}
               />
             </div>
           </div>
 
-          <div className="rounded-lg border border-slate-200 bg-slate-50 p-3.5">
-            <label className="flex items-center gap-2 text-sm font-medium text-slate-800">
+          <div className="rounded-xl border border-[var(--line)] bg-[var(--surface-2)]/60 p-3">
+            <label className="flex cursor-pointer items-center gap-2 text-[12.5px] font-semibold text-[var(--ink)]">
               <input
                 type="checkbox"
                 checked={isRecurring}
                 onChange={(e) => setIsRecurring(e.target.checked)}
-                className="h-4 w-4 rounded border-slate-300 text-blue-700"
+                className="h-4 w-4 rounded accent-[var(--blue)]"
               />
-              <span>Repeat weekly (Monday–Sunday)</span>
+              <span>Repeat weekly (Mon–Sun)</span>
             </label>
 
             {isRecurring && (
-              <div className="mt-3 flex flex-wrap gap-1.5">
+              <div className="mt-2.5 flex flex-wrap gap-1.5">
                 {ISO_WEEKDAYS.map((day) => {
                   const active = recurrenceDays.includes(day.iso);
                   return (
@@ -248,10 +263,10 @@ export function ScheduleBlockModal({
                       key={day.iso}
                       type="button"
                       onClick={() => toggleWeekday(day.iso)}
-                      className={`rounded-md border px-2.5 py-1.5 font-mono text-xs font-semibold transition-colors ${
+                      className={`rounded-[7px] border px-2.5 py-1 font-mono text-[11px] font-bold transition-colors ${
                         active
-                          ? 'border-slate-900 bg-slate-900 text-white'
-                          : 'border-slate-300 bg-white text-slate-700 hover:bg-slate-100'
+                          ? 'border-[var(--blue)] bg-[var(--blue)] text-white dark:text-[#121315]'
+                          : 'border-[var(--line-strong)] bg-[var(--surface)] text-[var(--muted)] hover:text-[var(--ink)]'
                       }`}
                     >
                       {day.short}
@@ -263,32 +278,41 @@ export function ScheduleBlockModal({
           </div>
 
           <div>
-            <label className="block text-xs font-medium text-slate-700">Notes</label>
+            <label className={labelClass}>Notes</label>
             <input
               type="text"
               placeholder="Optional context..."
               value={notes}
               onChange={(e) => setNotes(e.target.value)}
-              className="mt-1 block w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm"
+              className={inputClass}
             />
           </div>
 
           {error && (
-            <div className="rounded-lg border border-red-200 bg-red-50 px-3.5 py-2.5 text-sm text-red-700">
+            <div className="rounded-xl border border-red-400/40 bg-red-500/10 px-3.5 py-2.5 text-xs font-semibold text-red-700 dark:text-red-300">
               {error}
             </div>
           )}
 
-          <div className="flex justify-end gap-3 border-t border-slate-200 pt-4">
-            <Button type="button" variant="secondary" onClick={onClose}>
+          <div className="flex justify-end gap-2.5 border-t border-[var(--line)] pt-4">
+            <Button
+              type="button"
+              variant="secondary"
+              onClick={onClose}
+              className="!min-h-[38px] !px-4 !text-[12.5px]"
+            >
               Cancel
             </Button>
-            <Button type="submit" disabled={submitting}>
+            <button
+              type="submit"
+              disabled={submitting}
+              className="inline-flex h-[38px] items-center justify-center rounded-[9px] bg-[var(--blue)] px-4 text-[12.5px] font-bold text-white transition-opacity hover:opacity-90 disabled:opacity-50 dark:text-[#121315]"
+            >
               {submitting ? 'Saving...' : initialBlock ? 'Update Block' : 'Save Block'}
-            </Button>
+            </button>
           </div>
         </form>
-      </Card>
+      </div>
     </div>
   );
 }

@@ -1,15 +1,19 @@
-﻿import { useCallback, useEffect, useMemo, useState, type FormEvent } from 'react';
+﻿import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type FormEvent } from 'react';
 import { Link } from 'react-router-dom';
 import {
-  Bot,
+  ArrowRight,
+  ArrowUp,
+  Calendar,
+  Check,
   Eye,
-  Lock,
-  Send,
-  ShieldCheck,
+  HeartPulse,
+  Info,
+  MoreHorizontal,
+  Route,
+  Sparkles,
   Trash2,
-  User as UserIcon,
 } from 'lucide-react';
-import { Button, Card, EmptyState, PageHeader, ProvenanceBadge } from '@/design-system';
+import { Button, ProvenanceBadge } from '@/design-system';
 import { getLocalDateString } from '@/lib/datetime';
 import { useAuth } from '@/modules/auth/AuthContext';
 import { listRunningSessions } from '@/modules/running/repository';
@@ -62,6 +66,9 @@ export function CoachPage() {
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
 
+  const threadRef = useRef<HTMLDivElement | null>(null);
+  const prevCountRef = useRef<number>(0);
+
   const loadAll = useCallback(async () => {
     if (!user) return;
     setLoading(true);
@@ -92,6 +99,18 @@ export function CoachPage() {
     void loadAll();
   }, [loadAll]);
 
+  useLayoutEffect(() => {
+    if (loading || !threadRef.current) return;
+    const el = threadRef.current;
+    const grew = messages.length > prevCountRef.current && prevCountRef.current > 0;
+    if (grew || sending) {
+      el.scrollTo({ top: el.scrollHeight, behavior: 'smooth' });
+    } else {
+      el.scrollTop = el.scrollHeight;
+    }
+    prevCountRef.current = messages.length;
+  }, [loading, messages.length, sending]);
+
   const compactContext = useMemo(() => {
     return buildCompactCoachContext({
       today,
@@ -115,6 +134,12 @@ export function CoachPage() {
   }, [today, tz, profile, sessions, pbs, planned, blocks, checkIns]);
 
   const canCallGemini = Boolean(profile?.ai_enabled || profile?.ai_privacy_consent_acknowledged);
+  const activeModelName =
+    !profile?.ai_preferred_model || profile.ai_preferred_model === 'gemini-2.5-flash'
+      ? 'gemini-4-hydrogen'
+      : profile.ai_preferred_model;
+
+  const latestCheckIn = checkIns[0] ?? null;
 
   async function sendMessage(text: string) {
     if (!user || !text.trim() || sending) return;
@@ -144,10 +169,7 @@ export function CoachPage() {
             message: trimmed,
             history: messages.slice(-8).map((m) => ({ role: m.role, content: m.content })),
             context: compactContext,
-            preferredModel:
-              !profile?.ai_preferred_model || profile.ai_preferred_model === 'gemini-2.5-flash'
-                ? 'gemini-4-hydrogen'
-                : profile.ai_preferred_model,
+            preferredModel: activeModelName,
           });
           replyText = res.reply;
           modelUsed = res.model;
@@ -190,169 +212,319 @@ export function CoachPage() {
   }
 
   return (
-    <div className="space-y-6">
-      <PageHeader
-        title="AI Running Coach"
-        subtitle="Grounded strictly in your verified Supabase records with explicit privacy boundaries."
-        action={
-          <div className="flex flex-wrap items-center gap-2">
-            <Button variant="secondary" onClick={() => setShowContext((v) => !v)}>
-              <Eye className="h-4 w-4" />
-              <span>{showContext ? 'Hide Context JSON' : 'Inspect Context'}</span>
-            </Button>
-            {messages.length > 0 && (
-              <Button variant="secondary" onClick={() => void handleClearHistory()}>
-                <Trash2 className="h-4 w-4" />
-                <span>Clear Chat</span>
-              </Button>
-            )}
-          </div>
-        }
-      />
-
-      {/* Privacy & Mode Status Banner */}
-      <Card className="flex flex-col justify-between gap-3 p-4 sm:flex-row sm:items-center">
-        <div className="flex items-start gap-3">
-          {canCallGemini ? (
-            <ShieldCheck className="mt-0.5 h-5 w-5 shrink-0 text-emerald-700" />
-          ) : (
-            <Lock className="mt-0.5 h-5 w-5 shrink-0 text-amber-700" />
-          )}
-          <div className="text-xs">
-            <div className="font-semibold text-slate-900">
-              {canCallGemini
-                ? `Server-Side AI Enabled (${profile?.ai_preferred_model || 'gemini-2.5-flash'})`
-                : 'Deterministic Local Mode Active'}
-            </div>
-            <p className="mt-0.5 text-slate-600">
-              Sharing scope: Notes {compactContext.privacyApplied.shareNotes ? 'ON' : 'OFF'} Â·
-              Recovery {compactContext.privacyApplied.shareRecovery ? 'ON' : 'OFF'} Â· Karate{' '}
-              {compactContext.privacyApplied.shareKarate ? 'ON' : 'OFF'} Â· Other Commitments{' '}
-              {compactContext.privacyApplied.shareCommitments ? 'ON' : 'OFF'}.
-            </p>
-          </div>
+    <div className="flex h-full min-h-0 flex-col gap-3">
+      {/* Compact Single-Row Header */}
+      <div className="flex shrink-0 flex-wrap items-center justify-between gap-2">
+        <div className="flex items-baseline gap-3">
+          <h1 className="text-[22px] font-bold tracking-[-0.04em] text-[var(--ink)] sm:text-[26px]">
+            Train with <em className="not-italic text-[var(--blue)]">intention.</em>
+          </h1>
+          <span className="hidden text-[12px] text-[var(--muted)] md:inline">
+            Grounded strictly in your verified Supabase records
+          </span>
         </div>
-        <Link
-          to="/settings"
-          className="shrink-0 text-xs font-semibold text-blue-700 hover:underline"
-        >
-          Manage AI &amp; Privacy â†’
-        </Link>
-      </Card>
+
+        <div className="flex flex-wrap items-center gap-1.5">
+          <Link
+            to="/weekly-review"
+            className="inline-flex h-8 items-center gap-1.5 rounded-[8px] border border-[var(--line-strong)] bg-[var(--surface)] px-3 text-[12px] font-semibold text-[var(--ink)] transition-colors hover:bg-[var(--surface-2)]"
+          >
+            <Sparkles className="h-3.5 w-3.5 text-[var(--blue)]" />
+            <span>Weekly review</span>
+          </Link>
+          <Button
+            variant="secondary"
+            onClick={() => setShowContext((v) => !v)}
+            className="!min-h-[32px] !rounded-[8px] !px-3 !py-1 !text-[12px]"
+          >
+            <Eye className="h-3.5 w-3.5" />
+            <span>{showContext ? 'Hide JSON' : 'Context'}</span>
+          </Button>
+          {messages.length > 0 && (
+            <Button
+              variant="secondary"
+              onClick={() => void handleClearHistory()}
+              className="!min-h-[32px] !rounded-[8px] !px-2.5 !py-1 !text-[12px]"
+            >
+              <Trash2 className="h-3.5 w-3.5" />
+              <span>Clear</span>
+            </Button>
+          )}
+        </div>
+      </div>
 
       {showContext && (
-        <Card className="bg-slate-950 p-4 text-slate-100">
-          <div className="mb-2 flex items-center justify-between text-xs font-semibold text-slate-300">
+        <div className="shrink-0 rounded-xl border border-[var(--line)] bg-[#14161a] p-3.5 text-[#e8eaef]">
+          <div className="mb-1.5 flex items-center justify-between text-[11px] font-semibold text-[#a1a3ab]">
             <span>Verified Compact Context Payload Sent to Coach</span>
-            <span className="font-mono text-[11px] text-slate-400">
+            <span className="font-mono text-[10px]">
               {JSON.stringify(compactContext).length} bytes
             </span>
           </div>
-          <pre className="max-h-72 overflow-auto font-mono text-[11px] leading-relaxed text-slate-200">
+          <pre className="max-h-40 overflow-auto font-mono text-[10.5px] leading-relaxed">
             {JSON.stringify(compactContext, null, 2)}
           </pre>
-        </Card>
-      )}
-
-      {notice && (
-        <div className="rounded-lg border border-blue-200 bg-blue-50 px-4 py-3 text-xs font-medium text-blue-900">
-          {notice}
         </div>
       )}
 
-      {error && (
-        <div className="rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm font-medium text-red-800">
-          {error}
-        </div>
-      )}
-
-      {/* Quick Prompts */}
-      <div className="flex flex-wrap gap-2">
-        {QUICK_PROMPTS.map((prompt) => (
-          <button
-            key={prompt}
-            type="button"
-            disabled={sending}
-            onClick={() => void sendMessage(prompt)}
-            className="rounded-full border border-slate-200 bg-white px-3 py-1.5 text-xs font-medium text-slate-700 transition-colors hover:border-blue-400 hover:bg-blue-50/50 hover:text-blue-800 disabled:opacity-50"
-          >
-            {prompt}
-          </button>
-        ))}
-      </div>
-
-      {/* Chat Thread */}
-      <Card className="flex flex-col overflow-hidden">
-        <div className="max-h-[520px] min-h-[300px] space-y-4 overflow-y-auto p-5">
-          {loading ? (
-            <div className="py-12 text-center text-sm text-slate-500">
-              Loading conversation history...
-            </div>
-          ) : messages.length === 0 ? (
-            <EmptyState
-              icon={<Bot className="h-5 w-5" />}
-              title="Start a grounded coaching conversation"
-              description="Ask about pacing, 5K trajectory, Karate load balance, or recovery. Replies only reference verified data from your logs."
-            />
-          ) : (
-            messages.map((msg) => {
-              const isUser = msg.role === 'user';
-              return (
-                <div
-                  key={msg.id}
-                  className={`flex gap-3 ${isUser ? 'justify-end' : 'justify-start'}`}
-                >
-                  {!isUser && (
-                    <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-slate-900 text-blue-400">
-                      <Bot className="h-4 w-4" />
-                    </div>
-                  )}
-                  <div
-                    className={`max-w-[82%] rounded-xl border px-4 py-3 text-sm leading-relaxed ${
-                      isUser
-                        ? 'border-blue-700 bg-blue-700 text-white'
-                        : 'border-slate-200 bg-slate-50 text-slate-900'
-                    }`}
-                  >
-                    {!isUser && (
-                      <div className="mb-1.5 flex flex-wrap items-center gap-2">
-                        <span className="font-mono text-[10px] font-semibold uppercase text-slate-500">
-                          {msg.model_used ?? 'coach'}
-                        </span>
-                        <ProvenanceBadge origin={msg.data_origin} />
-                      </div>
-                    )}
-                    <div className="whitespace-pre-wrap">{msg.content}</div>
-                  </div>
-                  {isUser && (
-                    <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-slate-200 text-slate-700">
-                      <UserIcon className="h-4 w-4" />
-                    </div>
-                  )}
-                </div>
-              );
-            })
-          )}
-        </div>
-
-        <form
-          onSubmit={handleSubmit}
-          className="flex items-center gap-2 border-t border-slate-200 bg-white p-3"
+      {(notice || error) && (
+        <div
+          className={`shrink-0 rounded-lg border px-3.5 py-2 text-xs font-semibold ${
+            error
+              ? 'border-red-300/60 bg-red-500/10 text-red-700 dark:text-red-300'
+              : 'border-[var(--line)] bg-[var(--blue-lite)] text-[var(--blue-ink)]'
+          }`}
         >
-          <input
-            type="text"
-            value={input}
-            onChange={(e) => setInput(e.target.value)}
-            placeholder="Ask your running coach..."
-            disabled={sending}
-            className="flex-1 rounded-lg border border-slate-300 bg-white px-3.5 py-2.5 text-sm text-slate-900 focus:border-blue-600 focus:outline-none"
-          />
-          <Button type="submit" disabled={sending || !input.trim()}>
-            <Send className="h-4 w-4" />
-            <span>{sending ? 'Thinking...' : 'Send'}</span>
-          </Button>
-        </form>
-      </Card>
+          {error ?? notice}
+        </div>
+      )}
+
+      {/* Viewport-Locked 2-Column Workspace */}
+      <div className="grid min-h-0 flex-1 gap-4 lg:grid-cols-[minmax(0,1.65fr)_minmax(270px,0.82fr)]">
+        {/* Left: Modern Editorial Chat Canvas */}
+        <section className="flex h-full min-h-0 flex-col overflow-hidden rounded-2xl border border-[var(--line)] bg-[var(--surface)]">
+          {/* Minimal Status Header */}
+          <div className="flex shrink-0 items-center justify-between gap-2.5 border-b border-[var(--line)] px-5 py-3">
+            <div className="flex min-w-0 items-center gap-2.5">
+              <div className="grid h-7 w-7 shrink-0 place-items-center rounded-lg bg-[var(--blue-lite)] text-[var(--blue)]">
+                <Sparkles className="h-3.5 w-3.5" />
+              </div>
+              <div className="flex min-w-0 items-baseline gap-2">
+                <strong className="text-[13px] font-bold text-[var(--ink)]">
+                  Stride Coach
+                </strong>
+                <span className="truncate font-mono text-[10.5px] text-[var(--muted)]">
+                  {canCallGemini ? activeModelName : 'deterministic-local'}
+                </span>
+              </div>
+            </div>
+            <span className="inline-flex items-center gap-1.5 rounded-full bg-[var(--surface-2)] px-2.5 py-1 font-mono text-[10px] font-semibold text-[var(--muted)]">
+              <span
+                className={`h-1.5 w-1.5 rounded-full ${
+                  canCallGemini ? 'bg-[#2D9D87]' : 'bg-[#D58D38]'
+                }`}
+              />
+              {canCallGemini ? 'Connected' : 'Local'}
+            </span>
+          </div>
+
+          {/* Scrollable Editorial Message Thread */}
+          <div ref={threadRef} className="flex min-h-0 flex-1 flex-col gap-5 overflow-y-auto px-6 py-6 sm:px-9">
+            {loading ? (
+              <div className="m-auto text-sm text-[var(--muted)]">
+                Loading conversation history...
+              </div>
+            ) : messages.length === 0 ? (
+              <div className="m-auto w-full max-w-[460px] py-4 text-center">
+                <div className="inline-grid h-12 w-12 place-items-center rounded-2xl bg-[var(--blue-lite)] text-[var(--blue)]">
+                  <Sparkles className="h-5 w-5" />
+                </div>
+                <h2 className="mt-3.5 text-[22px] font-bold tracking-[-0.04em] text-[var(--ink)]">
+                  What are we working on today?
+                </h2>
+                <p className="mt-1.5 text-[12.5px] leading-relaxed text-[var(--muted)]">
+                  Ask about pacing, 5K trajectory, Karate load balance, or recovery.
+                </p>
+
+                <div className="mt-5 grid gap-2 sm:grid-cols-2">
+                  {QUICK_PROMPTS.map((prompt) => (
+                    <button
+                      key={prompt}
+                      type="button"
+                      disabled={sending}
+                      onClick={() => void sendMessage(prompt)}
+                      className="flex items-start justify-between gap-2 rounded-xl border border-[var(--line)] bg-[var(--bg)] p-3 text-left text-[11.5px] font-medium leading-snug text-[var(--ink)] transition-colors hover:border-[var(--blue)]/50 hover:bg-[var(--surface-2)] disabled:opacity-50"
+                    >
+                      <span>{prompt}</span>
+                      <ArrowRight className="mt-0.5 h-3.5 w-3.5 shrink-0 text-[var(--muted)]" />
+                    </button>
+                  ))}
+                </div>
+              </div>
+            ) : (
+              <>
+                {messages.map((msg) => {
+                  const isUser = msg.role === 'user';
+                  if (isUser) {
+                    return (
+                      <div key={msg.id} className="flex justify-end">
+                        <div className="max-w-[78%] rounded-2xl rounded-tr-sm bg-[var(--blue-lite)] px-4 py-2.5 text-[13.5px] font-medium leading-relaxed text-[var(--ink)]">
+                          <div className="whitespace-pre-wrap">{msg.content}</div>
+                        </div>
+                      </div>
+                    );
+                  }
+
+                  return (
+                    <div key={msg.id} className="flex items-start gap-3">
+                      <div className="mt-0.5 grid h-7 w-7 shrink-0 place-items-center rounded-lg border border-[var(--line)] bg-[var(--surface-2)] text-[var(--blue)]">
+                        <Sparkles className="h-3.5 w-3.5" />
+                      </div>
+                      <div className="min-w-0 flex-1 space-y-1.5">
+                        <div className="flex flex-wrap items-center gap-2">
+                          <span className="text-[11.5px] font-bold text-[var(--ink)]">
+                            Coach
+                          </span>
+                          <span className="font-mono text-[10px] text-[var(--faint)]">
+                            {msg.model_used ?? 'grounded'}
+                          </span>
+                          <ProvenanceBadge origin={msg.data_origin} />
+                        </div>
+                        <div className="whitespace-pre-wrap text-[13.5px] leading-[1.68] text-[var(--ink)]">
+                          {msg.content}
+                        </div>
+                      </div>
+                    </div>
+                  );
+                })}
+
+                {sending && (
+                  <div className="flex items-center gap-3">
+                    <div className="grid h-7 w-7 shrink-0 place-items-center rounded-lg border border-[var(--line)] bg-[var(--surface-2)] text-[var(--blue)]">
+                      <Sparkles className="h-3.5 w-3.5 animate-pulse" />
+                    </div>
+                    <div className="flex items-center gap-1.5 rounded-full bg-[var(--surface-2)] px-3 py-1.5 text-[11.5px] font-medium text-[var(--muted)]">
+                      <span>Reviewing your training data</span>
+                      <span className="inline-flex gap-0.5">
+                        <span className="h-1 w-1 animate-bounce rounded-full bg-[var(--blue)]" />
+                        <span className="h-1 w-1 animate-bounce rounded-full bg-[var(--blue)] [animation-delay:120ms]" />
+                        <span className="h-1 w-1 animate-bounce rounded-full bg-[var(--blue)] [animation-delay:240ms]" />
+                      </span>
+                    </div>
+                  </div>
+                )}
+                
+              </>
+            )}
+          </div>
+
+          {/* Modern Pinned Composer */}
+          <div className="shrink-0 px-4 pb-3 pt-1 sm:px-6">
+            <form
+              onSubmit={handleSubmit}
+              className="flex items-center gap-2 rounded-2xl border border-[var(--line-strong)] bg-[var(--bg)] p-1.5 pl-4 transition-colors focus-within:border-[var(--blue)] focus-within:bg-[var(--surface)]"
+            >
+              <input
+                type="text"
+                value={input}
+                onChange={(e) => setInput(e.target.value)}
+                placeholder="Ask your running coach…"
+                aria-label="Ask your coach"
+                disabled={sending}
+                className="min-w-0 flex-1 bg-transparent text-[13.5px] text-[var(--ink)] placeholder:text-[var(--faint)] focus:outline-none"
+              />
+              <button
+                type="submit"
+                disabled={sending || !input.trim()}
+                aria-label="Send message"
+                className="grid h-9 w-9 shrink-0 place-items-center rounded-xl bg-[var(--blue)] text-white transition-opacity hover:opacity-90 disabled:bg-[var(--surface-3)] disabled:text-[var(--faint)] dark:text-[#121315]"
+              >
+                <ArrowUp className="h-4 w-4 stroke-[2.5]" />
+              </button>
+            </form>
+            <div className="mt-1.5 text-center text-[10px] text-[var(--faint)]">
+              Grounded strictly in your recorded Supabase runs, readiness, and schedule.
+            </div>
+          </div>
+        </section>
+
+        {/* Right: Grounded Context Sidebar */}
+        <aside className="hidden h-full min-h-0 flex-col overflow-y-auto rounded-2xl border border-[var(--line)] bg-[var(--surface)] p-5 lg:flex">
+          <div className="text-[10.5px] font-bold tracking-[0.12em] text-[var(--muted)]">
+            WHAT YOUR COACH KNOWS
+          </div>
+          <h2 className="mt-1.5 text-[19px] font-bold leading-tight tracking-[-0.035em] text-[var(--ink)]">
+            Grounded in your real life.
+          </h2>
+
+          <div className="mt-3.5 divide-y divide-[var(--line)] border-t border-[var(--line)]">
+            <div className="flex items-center gap-3 py-3">
+              <div className="grid h-8 w-8 shrink-0 place-items-center rounded-[9px] bg-[var(--surface-2)] text-[var(--run)]">
+                <Route className="h-4 w-4" />
+              </div>
+              <div className="min-w-0 flex-1">
+                <b className="block text-[12px] text-[var(--ink)]">Recorded runs</b>
+                <span className="text-[11px] text-[var(--muted)]">
+                  {sessions.length} session{sessions.length === 1 ? '' : 's'} available
+                </span>
+              </div>
+              {sessions.length > 0 ? (
+                <Check className="h-4 w-4 text-[var(--muted)]" />
+              ) : (
+                <MoreHorizontal className="h-4 w-4 text-[var(--faint)]" />
+              )}
+            </div>
+
+            <div className="flex items-center gap-3 py-3">
+              <div
+                className="grid h-8 w-8 shrink-0 place-items-center rounded-[9px]"
+                style={{
+                  color: 'var(--karate)',
+                  background: 'color-mix(in srgb, var(--karate) 12%, var(--surface))',
+                }}
+              >
+                <HeartPulse className="h-4 w-4" />
+              </div>
+              <div className="min-w-0 flex-1">
+                <b className="block text-[12px] text-[var(--ink)]">Readiness</b>
+                <span className="text-[11px] text-[var(--muted)]">
+                  {latestCheckIn
+                    ? `Checked in on ${latestCheckIn.checkin_date}`
+                    : 'No check-in logged yet'}
+                </span>
+              </div>
+              {latestCheckIn ? (
+                <Check className="h-4 w-4 text-[var(--muted)]" />
+              ) : (
+                <MoreHorizontal className="h-4 w-4 text-[var(--faint)]" />
+              )}
+            </div>
+
+            <div className="flex items-center gap-3 py-3">
+              <div
+                className="grid h-8 w-8 shrink-0 place-items-center rounded-[9px]"
+                style={{
+                  color: 'var(--music)',
+                  background: 'color-mix(in srgb, var(--music) 12%, var(--surface))',
+                }}
+              >
+                <Calendar className="h-4 w-4" />
+              </div>
+              <div className="min-w-0 flex-1">
+                <b className="block text-[12px] text-[var(--ink)]">Non-running load</b>
+                <span className="text-[11px] text-[var(--muted)]">
+                  {blocks.length} blocks · Karate{' '}
+                  {compactContext.privacyApplied.shareKarate ? 'ON' : 'OFF'}
+                </span>
+              </div>
+              <Check className="h-4 w-4 text-[var(--muted)]" />
+            </div>
+          </div>
+
+          <div className="mt-2 flex items-start gap-2 rounded-[8px] bg-[var(--surface-2)] p-3 text-[11px] leading-relaxed text-[var(--muted)]">
+            <Info className="mt-0.5 h-3.5 w-3.5 shrink-0" />
+            <span>
+              Your coach never invents sessions or treats planned workouts as completed.
+            </span>
+          </div>
+
+          <div className="mt-auto flex flex-col gap-2 pt-3">
+            <Link
+              to="/calendar"
+              className="inline-flex h-9 w-full items-center justify-center gap-2 rounded-[8px] border border-[var(--line-strong)] bg-[var(--surface)] px-3 text-[12px] font-semibold text-[var(--ink)] transition-colors hover:bg-[var(--surface-2)]"
+            >
+              <span>Log today&apos;s readiness</span>
+              <ArrowRight className="h-3.5 w-3.5" />
+            </Link>
+            <Link
+              to="/settings"
+              className="text-center text-[11px] font-semibold text-[var(--blue)] hover:underline"
+            >
+              Manage AI &amp; Privacy →
+            </Link>
+          </div>
+        </aside>
+      </div>
     </div>
   );
 }

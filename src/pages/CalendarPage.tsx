@@ -12,7 +12,7 @@ import {
   Trash2,
   X,
 } from 'lucide-react';
-import { Button, Card, CategoryBadge, EmptyState } from '@/design-system';
+import { CATEGORY_COLORS, CATEGORY_SHORT_LABELS, CategoryDot, CategoryMark, EmptyState } from '@/design-system';
 import { getLocalDateString } from '@/lib/datetime';
 import { supabase } from '@/lib/supabase';
 import { useAuth } from '@/modules/auth/AuthContext';
@@ -73,29 +73,6 @@ const ALL_CATEGORIES: ActivityCategory[] = [
   'UNIVERSITY',
   'CUSTOM',
 ];
-
-const MONTH_CHIP_STYLES: Record<ActivityCategory, string> = {
-  RUNNING:
-    'bg-[#E8F9EF] text-[#114A2B] dark:bg-[#3C1C26] dark:text-[#FFE4E8]',
-  KARATE:
-    'bg-[#FEF3C7] text-[#78350F] dark:bg-[#3A2E1B] dark:text-[#FDE68A]',
-  STRENGTH:
-    'bg-teal-50 text-teal-900 dark:bg-[#143336] dark:text-teal-100',
-  RECOVERY:
-    'bg-emerald-50 text-emerald-900 dark:bg-[#133228] dark:text-emerald-100',
-  VOCAL:
-    'bg-rose-50 text-rose-900 dark:bg-[#381E2E] dark:text-pink-100',
-  DRUMMING:
-    'bg-violet-50 text-violet-900 dark:bg-[#2B2042] dark:text-violet-100',
-  GUITAR:
-    'bg-orange-50 text-orange-900 dark:bg-[#3A2418] dark:text-orange-100',
-  KEYBOARD:
-    'bg-sky-50 text-sky-900 dark:bg-[#162C3D] dark:text-sky-100',
-  UNIVERSITY:
-    'bg-slate-100 text-slate-800 dark:bg-[#272D3D] dark:text-slate-100',
-  CUSTOM:
-    'bg-[#F3F5F4] text-[#161C19] dark:bg-[#2A2C3A] dark:text-slate-100',
-};
 
 async function fetchPlannedWorkoutsRange(
   userId: string,
@@ -373,23 +350,23 @@ export function CalendarPage() {
   }, [view, anchorYear, anchorMonth, selectedDate, rangeStart, rangeEnd]);
 
   return (
-    <div className="flex h-full min-h-0 flex-col bg-white dark:bg-morgen-black">
-      {/* Compact Single-Row Calendar Control Bar */}
-      <div className="relative z-20 flex shrink-0 flex-wrap items-center justify-between gap-3 border-b border-[#E5EAE7] bg-white px-5 py-3.5 dark:border-morgen-border dark:bg-morgen-black">
+    <div className="flex h-full min-h-0 flex-col bg-[var(--bg)] text-[var(--ink)]">
+      {/* Compact Single-Row Stride Control Bar (viewport-locked, zero page scroll) */}
+      <div className="relative z-20 flex shrink-0 flex-wrap items-center justify-between gap-3 border-b border-[var(--line)] bg-[var(--surface)] px-5 py-3">
         {/* Left: Date Navigation */}
         <div className="flex items-center gap-1.5">
           <button
             type="button"
             onClick={() => stepPeriod(-1)}
             aria-label="Previous"
-            className="flex h-9 w-9 items-center justify-center rounded-xl border border-[#E5EAE7] bg-white text-[#161C19] hover:bg-[#F7F9F8] dark:border-morgen-border dark:bg-morgen-surface dark:text-white dark:hover:bg-morgen-elevated"
+            className="flex h-9 w-9 items-center justify-center rounded-[8px] border border-[var(--line)] bg-[var(--surface)] text-[var(--ink)] transition-colors hover:bg-[var(--surface-2)]"
           >
             <ChevronLeft className="h-4 w-4" />
           </button>
           <button
             type="button"
             onClick={() => setSelectedDate(today)}
-            className="h-9 rounded-xl border border-[#E5EAE7] bg-white px-3.5 text-xs font-semibold text-[#161C19] hover:bg-[#F7F9F8] dark:border-morgen-border dark:bg-morgen-surface dark:text-white dark:hover:bg-morgen-elevated"
+            className="h-9 rounded-[8px] border border-[var(--line)] bg-[var(--surface)] px-3.5 text-[12px] font-semibold text-[var(--ink)] transition-colors hover:bg-[var(--surface-2)]"
           >
             Today
           </button>
@@ -397,17 +374,21 @@ export function CalendarPage() {
             type="button"
             onClick={() => stepPeriod(1)}
             aria-label="Next"
-            className="flex h-9 w-9 items-center justify-center rounded-xl border border-[#E5EAE7] bg-white text-[#161C19] hover:bg-[#F7F9F8] dark:border-morgen-border dark:bg-morgen-surface dark:text-white dark:hover:bg-morgen-elevated"
+            className="flex h-9 w-9 items-center justify-center rounded-[8px] border border-[var(--line)] bg-[var(--surface)] text-[var(--ink)] transition-colors hover:bg-[var(--surface-2)]"
           >
             <ChevronRight className="h-4 w-4" />
           </button>
-          <h1 className="ml-2.5 font-display text-lg font-bold tracking-tight text-[#161C19] dark:text-white">
+          <h1 className="ml-2.5 text-[15px] font-bold tracking-[-0.02em] text-[var(--ink)]">
             {periodTitle}
           </h1>
         </div>
 
-        {/* Center: View Switcher */}
-        <div className="inline-flex rounded-xl border border-[#E5EAE7] bg-[#F8FAF9] p-1 text-xs font-semibold dark:border-morgen-border dark:bg-morgen-surface">
+        {/* Center: Stride Segmented View Switcher */}
+        <div
+          role="tablist"
+          aria-label="Calendar view"
+          className="inline-flex rounded-[10px] border border-[var(--line)] bg-[var(--surface-2)] p-1 text-[12px] font-semibold"
+        >
           {(
             [
               { id: 'WEEK', label: 'Week' },
@@ -415,51 +396,57 @@ export function CalendarPage() {
               { id: 'MONTH', label: 'Month' },
               { id: 'AGENDA', label: 'Agenda' },
             ] as const
-          ).map(({ id, label }) => (
-            <button
-              key={id}
-              type="button"
-              onClick={() => setView(id)}
-              className={`rounded-lg px-3.5 py-1.5 transition-colors ${
-                view === id
-                  ? 'bg-[#176D3E] text-white dark:bg-morgen-rose dark:text-white'
-                  : 'text-flomo-slate hover:text-[#161C19] dark:text-morgen-muted dark:hover:text-white'
-              }`}
-            >
-              {label}
-            </button>
-          ))}
+          ).map(({ id, label }) => {
+            const selected = view === id;
+            return (
+              <button
+                key={id}
+                role="tab"
+                aria-selected={selected}
+                type="button"
+                onClick={() => setView(id)}
+                className={`rounded-[7px] px-3.5 py-1.5 transition-colors ${
+                  selected
+                    ? 'bg-[var(--surface)] text-[var(--ink)] shadow-[0_1px_3px_rgba(0,0,0,0.08)]'
+                    : 'text-[var(--muted)] hover:text-[var(--ink)]'
+                }`}
+              >
+                {label}
+              </button>
+            );
+          })}
         </div>
 
-        {/* Right: Compact Utility Actions */}
-        <div className="flex flex-wrap items-center gap-1.5">
-          {/* Seed templates button only if missing */}
+        {/* Right: Utility Actions */}
+        <div className="flex flex-wrap items-center gap-2">
           {!loading && (blocks.length === 0 || !hasStrengthBlock) && (
             <button
               type="button"
               disabled={seeding}
               onClick={() => void handleSeedDefaults()}
-              className="inline-flex h-9 items-center gap-1.5 rounded-xl border border-[#2CCC74]/50 bg-[#2CCC74]/10 px-2.5 text-xs font-semibold text-[#176D3E] hover:bg-[#2CCC74]/15 dark:border-morgen-red/40 dark:bg-morgen-wine dark:text-morgen-red"
+              className="inline-flex h-9 items-center gap-1.5 rounded-[8px] border border-transparent bg-[var(--blue-lite)] px-3 text-[12px] font-semibold text-[var(--blue-ink)] transition-opacity hover:opacity-85 disabled:opacity-50"
             >
               <Sparkles className="h-3.5 w-3.5" />
               <span>{seeding ? 'Adding...' : 'Seed Templates'}</span>
             </button>
           )}
 
-          {/* Compact Filter Dropdown */}
+          {/* Category Filter Dropdown */}
           <div className="relative">
             <button
               type="button"
               onClick={() => setShowFilterMenu((v) => !v)}
-              className={`inline-flex h-9 items-center gap-1.5 rounded-xl border px-2.5 text-xs font-semibold transition-colors ${
+              className={`inline-flex h-9 items-center gap-1.5 rounded-[8px] border px-3 text-[12px] font-semibold transition-colors ${
                 categoryFilter !== 'ALL'
-                  ? 'border-[#176D3E] bg-[#176D3E]/10 text-[#176D3E] dark:border-morgen-red dark:bg-morgen-wine dark:text-morgen-red'
-                  : 'border-[#E5EAE7] bg-white text-[#161C19] hover:bg-[#F7F9F8] dark:border-morgen-border dark:bg-morgen-surface dark:text-morgen-body dark:hover:bg-morgen-elevated'
+                  ? 'border-[var(--blue)] bg-[var(--blue-lite)] text-[var(--blue-ink)]'
+                  : 'border-[var(--line)] bg-[var(--surface)] text-[var(--ink)] hover:bg-[var(--surface-2)]'
               }`}
             >
               <Filter className="h-3.5 w-3.5" />
               <span>
-                {categoryFilter === 'ALL' ? 'Filter' : ACTIVITY_CATEGORY_LABELS[categoryFilter]}
+                {categoryFilter === 'ALL'
+                  ? 'All activities'
+                  : CATEGORY_SHORT_LABELS[categoryFilter]}
               </span>
             </button>
 
@@ -469,20 +456,20 @@ export function CalendarPage() {
                   className="fixed inset-0 z-30"
                   onClick={() => setShowFilterMenu(false)}
                 />
-                <div className="absolute right-0 top-10 z-40 w-48 rounded-xl border border-[#E5EAE7] bg-white p-1.5 shadow-lg dark:border-morgen-border dark:bg-morgen-surface">
+                <div className="absolute right-0 top-11 z-40 w-52 rounded-xl border border-[var(--line)] bg-[var(--surface)] p-1.5 shadow-[var(--shadow)]">
                   <button
                     type="button"
                     onClick={() => {
                       setCategoryFilter('ALL');
                       setShowFilterMenu(false);
                     }}
-                    className={`flex w-full items-center justify-between rounded-lg px-2.5 py-1.5 text-left text-xs font-medium ${
+                    className={`flex w-full items-center justify-between rounded-lg px-2.5 py-2 text-left text-[12px] font-medium transition-colors ${
                       categoryFilter === 'ALL'
-                        ? 'bg-[#176D3E] text-white dark:bg-morgen-rose'
-                        : 'text-[#161C19] hover:bg-[#F7F9F8] dark:text-morgen-body dark:hover:bg-morgen-elevated'
+                        ? 'bg-[var(--blue-lite)] font-semibold text-[var(--blue-ink)]'
+                        : 'text-[var(--ink)] hover:bg-[var(--surface-2)]'
                     }`}
                   >
-                    <span>All Categories</span>
+                    <span>All activities</span>
                   </button>
                   {ALL_CATEGORIES.map((cat) => (
                     <button
@@ -492,12 +479,13 @@ export function CalendarPage() {
                         setCategoryFilter(cat);
                         setShowFilterMenu(false);
                       }}
-                      className={`mt-0.5 flex w-full items-center justify-between rounded-lg px-2.5 py-1.5 text-left text-xs font-medium ${
+                      className={`mt-0.5 flex w-full items-center gap-2 rounded-lg px-2.5 py-1.5 text-left text-[12px] font-medium transition-colors ${
                         categoryFilter === cat
-                          ? 'bg-[#176D3E] text-white dark:bg-morgen-rose'
-                          : 'text-[#161C19] hover:bg-[#F7F9F8] dark:text-morgen-body dark:hover:bg-morgen-elevated'
+                          ? 'bg-[var(--blue-lite)] font-semibold text-[var(--blue-ink)]'
+                          : 'text-[var(--ink)] hover:bg-[var(--surface-2)]'
                       }`}
                     >
+                      <CategoryDot category={cat} />
                       <span>{ACTIVITY_CATEGORY_LABELS[cat]}</span>
                     </button>
                   ))}
@@ -510,50 +498,51 @@ export function CalendarPage() {
           <button
             type="button"
             onClick={() => setShowInbox((v) => !v)}
-            className={`inline-flex h-9 items-center gap-1.5 rounded-xl border px-2.5 text-xs font-semibold transition-colors ${
+            className={`inline-flex h-9 items-center gap-1.5 rounded-[8px] border px-3 text-[12px] font-semibold transition-colors ${
               showInbox
-                ? 'border-[#176D3E] bg-[#176D3E]/10 text-[#176D3E] dark:border-morgen-red dark:bg-morgen-wine dark:text-morgen-red'
-                : 'border-[#E5EAE7] bg-white text-[#161C19] hover:bg-[#F7F9F8] dark:border-morgen-border dark:bg-morgen-surface dark:text-morgen-body dark:hover:bg-morgen-elevated'
+                ? 'border-[var(--blue)] bg-[var(--blue-lite)] text-[var(--blue-ink)]'
+                : 'border-[var(--line)] bg-[var(--surface)] text-[var(--ink)] hover:bg-[var(--surface-2)]'
             }`}
           >
             <Inbox className="h-3.5 w-3.5" />
             <span className="hidden sm:inline">Inbox</span>
-            <span className="rounded bg-black/10 px-1.5 py-0.5 font-mono text-[10px] dark:bg-white/10">
+            <span className="rounded-[6px] bg-[var(--surface-2)] px-1.5 py-0.5 font-mono text-[10px] font-bold text-[var(--muted)]">
               {inboxBlocks.length}
             </span>
           </button>
 
-          {/* Compact Readiness Pill */}
+          {/* Readiness Pill */}
           <button
             type="button"
             onClick={() => setShowReadinessModal(true)}
             title={readinessEval.summary}
-            className="inline-flex h-9 items-center gap-1.5 rounded-xl border border-[#E5EAE7] bg-white px-2.5 text-xs font-semibold text-[#161C19] hover:bg-[#F7F9F8] dark:border-morgen-border dark:bg-morgen-surface dark:text-morgen-body dark:hover:bg-morgen-elevated"
+            className="inline-flex h-9 items-center gap-1.5 rounded-[8px] border border-[var(--line)] bg-[var(--surface)] px-3 text-[12px] font-semibold text-[var(--ink)] transition-colors hover:bg-[var(--surface-2)]"
           >
-            <HeartPulse className="h-3.5 w-3.5 text-[#176D3E] dark:text-morgen-red" />
+            <HeartPulse className="h-3.5 w-3.5 text-[var(--blue)]" />
             <span className="hidden md:inline">
-              {readinessEval.score !== null ? `${readinessEval.score}/100` : 'Check-In'}
+              {readinessEval.score !== null ? `${readinessEval.score}/100` : 'Readiness'}
             </span>
           </button>
 
           {/* Primary Add Block */}
-          <Button
+          <button
+            type="button"
             onClick={openNewBlockModal}
-            className="!min-h-[32px] !px-3 !py-1 !text-xs"
+            className="inline-flex h-9 items-center gap-1.5 rounded-[9px] bg-[var(--blue)] px-4 text-[12.5px] font-bold text-white transition-opacity hover:opacity-90 active:translate-y-px dark:text-[#121315]"
           >
-            <Plus className="h-3.5 w-3.5" />
-            <span>Add</span>
-          </Button>
+            <Plus className="h-4 w-4 stroke-[2.5]" />
+            <span>Add block</span>
+          </button>
         </div>
       </div>
 
-      {/* Slim Dismissible Alert Strip (only shown on error or notice) */}
+      {/* Slim Dismissible Alert Strip */}
       {(error || notice) && (
         <div
-          className={`flex shrink-0 items-center justify-between gap-2 border-b px-4 py-1.5 text-xs font-medium ${
+          className={`flex shrink-0 items-center justify-between gap-2 border-b px-5 py-2 text-xs font-medium ${
             error
-              ? 'border-red-200 bg-red-50 text-red-800 dark:border-morgen-rose/40 dark:bg-morgen-wine/80 dark:text-morgen-red'
-              : 'border-[#2CCC74]/40 bg-[#2CCC74]/10 text-[#176D3E] dark:border-emerald-400/30 dark:bg-emerald-950/60 dark:text-emerald-300'
+              ? 'border-red-300/60 bg-red-500/10 text-red-700 dark:text-red-300'
+              : 'border-[var(--line)] bg-[var(--blue-lite)] text-[var(--blue-ink)]'
           }`}
         >
           <span>{error ?? notice}</span>
@@ -574,7 +563,7 @@ export function CalendarPage() {
       <div className="flex min-h-0 flex-1 overflow-hidden">
         {/* Optional Slide-In Unscheduled Inbox Rail */}
         {showInbox && (
-          <div className="w-72 shrink-0 overflow-y-auto border-r border-[#E5EAE7] bg-[#F7F9F8]/60 p-3 dark:border-morgen-border dark:bg-morgen-black">
+          <div className="w-72 shrink-0 overflow-y-auto border-r border-[var(--line)] bg-[var(--bg)] p-3.5">
             <InboxSidebar
               selectedDate={selectedDate}
               inboxBlocks={inboxBlocks}
@@ -591,26 +580,30 @@ export function CalendarPage() {
         {/* Active Calendar Surface */}
         <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
           {loading ? (
-            <div className="flex flex-1 items-center justify-center text-sm text-flomo-slate dark:text-morgen-muted">
+            <div className="flex flex-1 items-center justify-center text-sm text-[var(--muted)]">
               Loading calendar...
             </div>
           ) : view === 'WEEK' ? (
-            <WeeklyGridView
-              weekStartIso={weekStartIso}
-              todayIso={today}
-              blocks={filteredBlocks}
-              completions={completions}
-              plannedRuns={filteredPlannedRuns}
-              recordedRuns={filteredRuns}
-              onSelectDate={(dateIso) => {
-                setSelectedDate(dateIso);
-                setView('TIMELINE');
-              }}
-              onEditBlock={openEditBlockModal}
-              onCreateAtSlot={openSlotModal}
-            />
+            <div className="flex h-full min-h-0 flex-1 flex-col overflow-hidden bg-[var(--bg)] p-4 sm:p-5">
+              <div className="mx-auto flex h-full min-h-0 w-full max-w-[1360px] flex-col overflow-hidden rounded-2xl border border-[var(--line)] bg-[var(--surface)]">
+                <WeeklyGridView
+                  weekStartIso={weekStartIso}
+                  todayIso={today}
+                  blocks={filteredBlocks}
+                  completions={completions}
+                  plannedRuns={filteredPlannedRuns}
+                  recordedRuns={filteredRuns}
+                  onSelectDate={(dateIso) => {
+                    setSelectedDate(dateIso);
+                    setView('TIMELINE');
+                  }}
+                  onEditBlock={openEditBlockModal}
+                  onCreateAtSlot={openSlotModal}
+                />
+              </div>
+            </div>
           ) : view === 'TIMELINE' ? (
-            <div className="min-h-0 flex-1 overflow-y-auto p-4 sm:p-5">
+            <div className="min-h-0 flex-1 overflow-y-auto bg-[var(--bg)] p-5 sm:p-6">
               <div className="mx-auto max-w-4xl">
                 <DailyTimelineView
                   weekStartIso={weekStartIso}
@@ -629,164 +622,236 @@ export function CalendarPage() {
               </div>
             </div>
           ) : view === 'MONTH' ? (
-            <div className="flex min-h-0 flex-1 flex-col overflow-y-auto bg-white dark:bg-morgen-surface">
-              <div className="grid shrink-0 grid-cols-7 border-b border-[#E5EAE7] bg-[#F7F9F8] text-center text-[11px] font-semibold uppercase tracking-wider text-flomo-slate dark:border-morgen-border dark:bg-morgen-black dark:text-morgen-muted">
-                {ISO_WEEKDAYS.map((d) => (
-                  <div key={d.iso} className="py-2">
-                    {d.short}
-                  </div>
-                ))}
-              </div>
-              <div className="grid flex-1 auto-rows-fr grid-cols-7 divide-x divide-y divide-[#E5EAE7] dark:divide-morgen-border">
-                {rangeTimelines.map((dt) => {
-                  const date = dt.dateStr;
-                  const inMonth = Number(date.slice(5, 7)) - 1 === anchorMonth;
-                  const isToday = date === today;
-                  const dayItems = [...dt.allDayItems, ...dt.timedItems];
-
-                  return (
+            (() => {
+              const monthRows = Math.max(4, Math.ceil(rangeTimelines.length / 7));
+              return (
+                <div className="flex h-full min-h-0 flex-1 flex-col overflow-hidden bg-[var(--bg)] p-4 sm:p-5">
+                  <div className="mx-auto flex h-full min-h-0 w-full max-w-[1360px] flex-col overflow-hidden rounded-2xl border border-[#bfc2bc] bg-[var(--surface)] dark:border-[#52565f]">
                     <div
-                      key={date}
-                      onClick={() => {
-                        setSelectedDate(date);
-                        setView('TIMELINE');
+                      className="grid h-full min-h-0 flex-1 grid-cols-7 gap-px bg-[#bfc2bc] dark:bg-[#52565f]"
+                      style={{
+                        gridTemplateRows: `36px repeat(${monthRows}, minmax(0, 1fr))`,
                       }}
-                      className={`min-h-[112px] cursor-pointer p-1.5 transition-colors hover:bg-[#F7F9F8] dark:hover:bg-morgen-elevated/60 ${
-                        inMonth
-                          ? 'bg-white dark:bg-morgen-surface'
-                          : 'bg-[#F7F9F8]/60 dark:bg-morgen-black/60'
-                      }`}
                     >
-                      <div className="flex justify-end">
-                        <span
-                          className={`flex h-6 w-6 items-center justify-center rounded-full font-mono text-xs font-semibold ${
-                            isToday
-                              ? 'bg-[#176D3E] text-white dark:bg-morgen-rose'
-                              : inMonth
-                                ? 'text-[#161C19] dark:text-white'
-                                : 'text-flomo-slate/45 dark:text-morgen-muted/45'
-                          }`}
+                      {ISO_WEEKDAYS.map((d) => (
+                        <div
+                          key={d.iso}
+                          className="grid place-items-center bg-[var(--surface-2)] text-[11px] font-bold uppercase tracking-[0.06em] text-[var(--muted)]"
                         >
-                          {Number(date.slice(8))}
-                        </span>
-                      </div>
-                      <div className="mt-1 space-y-1">
-                        {dayItems.slice(0, 3).map((item) => (
-                          <div
-                            key={item.id}
-                            title={item.title}
-                            className={`truncate rounded px-1.5 py-0.5 text-[11px] font-medium ${
-                              MONTH_CHIP_STYLES[item.category]
+                          {d.short}
+                        </div>
+                      ))}
+
+                      {rangeTimelines.map((dt) => {
+                        const date = dt.dateStr;
+                        const inMonth = Number(date.slice(5, 7)) - 1 === anchorMonth;
+                        const isToday = date === today;
+                        const dayItems = [...dt.allDayItems, ...dt.timedItems];
+
+                        return (
+                          <button
+                            key={date}
+                            type="button"
+                            onClick={() => {
+                              setSelectedDate(date);
+                              setView('TIMELINE');
+                            }}
+                            className={`flex min-h-0 min-w-0 flex-col items-start gap-1.5 overflow-hidden px-3 py-2 text-left transition-colors ${
+                              inMonth
+                                ? 'bg-[var(--surface)] hover:bg-[var(--surface-2)] dark:bg-[#14161a] dark:hover:bg-[#1a1d23]'
+                                : 'bg-[var(--surface-2)]/75 text-[var(--faint)] hover:bg-[var(--surface-2)] dark:bg-[#23262d] dark:hover:bg-[#292d35]'
                             }`}
                           >
-                            {item.startMin !== null && (
-                              <span className="mr-1 font-mono text-[10px] opacity-75">
-                                {formatMinutesToTime(item.startMin)}
-                              </span>
+                            <strong
+                              className={`grid h-6 w-6 shrink-0 place-items-center rounded-[7px] font-mono text-[13px] font-bold ${
+                                isToday
+                                  ? 'bg-[var(--blue)] text-white'
+                                  : inMonth
+                                    ? 'text-[var(--ink)]'
+                                    : 'text-[var(--faint)]'
+                              }`}
+                            >
+                              {Number(date.slice(8))}
+                            </strong>
+
+                            {dayItems.length > 0 && (
+                              <div className="flex flex-wrap items-center gap-1">
+                                {dayItems.slice(0, 4).map((item) => (
+                                  <i
+                                    key={item.id}
+                                    className="inline-block h-1.5 w-1.5 rounded-full"
+                                    style={{ backgroundColor: CATEGORY_COLORS[item.category] }}
+                                  />
+                                ))}
+                                {dayItems.length > 4 && (
+                                  <small className="font-mono text-[9.5px] font-semibold text-[var(--muted)]">
+                                    +{dayItems.length - 4}
+                                  </small>
+                                )}
+                              </div>
                             )}
-                            {item.title}
-                          </div>
-                        ))}
-                        {dayItems.length > 3 && (
-                          <div className="px-1 font-mono text-[10px] font-medium text-flomo-slate dark:text-morgen-muted">
-                            +{dayItems.length - 3} more
-                          </div>
-                        )}
+
+                            {dayItems.length > 0 && (
+                              <div className="w-full truncate text-[10.5px] font-semibold text-[var(--muted)]">
+                                {dayItems[0].title}
+                                {dayItems.length > 1 ? ` +${dayItems.length - 1}` : ''}
+                              </div>
+                            )}
+                          </button>
+                        );
+                      })}
+                    </div>
+                  </div>
+                </div>
+              );
+            })()
+          ) : (
+            (() => {
+              const allAgendaItems = rangeTimelines.flatMap((dt) => [
+                ...dt.allDayItems,
+                ...dt.timedItems,
+              ]);
+              const completedCount = allAgendaItems.filter((i) => i.isCompleted).length;
+              const plannedCount = Math.max(0, allAgendaItems.length - completedCount);
+              const activeDays = rangeTimelines.filter(
+                (dt) => dt.allDayItems.length + dt.timedItems.length > 0
+              ).length;
+
+              return (
+                <div className="min-h-0 flex-1 overflow-y-auto bg-[var(--bg)] p-4 sm:p-6">
+                  <div className="mx-auto max-w-4xl space-y-4">
+                    {/* Plane-inspired Compact Workload Summary Strip */}
+                    <div className="grid grid-cols-3 gap-2.5">
+                      <div className="rounded-xl border border-[var(--line)] bg-[var(--surface)] px-4 py-3">
+                        <div className="flex items-center gap-2 text-[11px] font-medium text-[var(--muted)]">
+                          <span className="h-2 w-2 rounded-[2px] bg-[var(--blue)]" />
+                          <span>Scheduled</span>
+                        </div>
+                        <div className="mt-1 font-mono text-[18px] font-bold text-[var(--ink)] tabular-nums">
+                          {plannedCount}
+                        </div>
+                      </div>
+                      <div className="rounded-xl border border-[var(--line)] bg-[var(--surface)] px-4 py-3">
+                        <div className="flex items-center gap-2 text-[11px] font-medium text-[var(--muted)]">
+                          <span className="h-2 w-2 rounded-[2px] bg-[#2D9D87]" />
+                          <span>Completed</span>
+                        </div>
+                        <div className="mt-1 font-mono text-[18px] font-bold text-[var(--ink)] tabular-nums">
+                          {completedCount}
+                        </div>
+                      </div>
+                      <div className="rounded-xl border border-[var(--line)] bg-[var(--surface)] px-4 py-3">
+                        <div className="flex items-center gap-2 text-[11px] font-medium text-[var(--muted)]">
+                          <span className="h-2 w-2 rounded-[2px] bg-[#D58D38]" />
+                          <span>Active days</span>
+                        </div>
+                        <div className="mt-1 font-mono text-[18px] font-bold text-[var(--ink)] tabular-nums">
+                          {activeDays} / 14
+                        </div>
                       </div>
                     </div>
-                  );
-                })}
-              </div>
-            </div>
-          ) : (
-            <div className="min-h-0 flex-1 overflow-y-auto p-4 sm:p-5">
-              <div className="mx-auto max-w-4xl space-y-3">
-                {rangeTimelines.every(
-                  (dt) => dt.allDayItems.length === 0 && dt.timedItems.length === 0
-                ) ? (
-                  <EmptyState
-                    icon={<CalendarDays className="h-5 w-5" />}
-                    title="No scheduled items in this 14-day window"
-                    description="Add a commitment or seed your recurring templates from the top bar."
-                  />
-                ) : (
-                  rangeTimelines.map((dt) => {
-                    const items = [...dt.allDayItems, ...dt.timedItems];
-                    if (items.length === 0) return null;
-                    return (
-                      <div key={dt.dateStr} className="space-y-1.5">
-                        <div className="flex items-center gap-2 pt-1">
-                          <span className="font-mono text-xs font-bold text-[#161C19] dark:text-white">
-                            {dt.dateStr}
-                          </span>
-                          {dt.dateStr === today && (
-                            <span className="rounded bg-[#2CCC74]/15 px-1.5 py-0.5 font-mono text-[10px] font-semibold text-[#176D3E] dark:bg-morgen-wine dark:text-morgen-red">
-                              TODAY
-                            </span>
-                          )}
-                        </div>
-                        {items.map((item) => (
-                          <Card
-                            key={`${dt.dateStr}-${item.id}`}
-                            className="flex flex-wrap items-center justify-between gap-3 px-4 py-3"
-                          >
-                            <div className="min-w-0">
-                              <div className="flex flex-wrap items-center gap-2">
-                                {item.startMin !== null && (
-                                  <span className="font-mono text-xs text-flomo-slate dark:text-morgen-muted">
-                                    {formatMinutesToTime(item.startMin)}
+
+                    {allAgendaItems.length === 0 ? (
+                      <EmptyState
+                        icon={<CalendarDays className="h-5 w-5" />}
+                        title="No scheduled items in this 14-day window"
+                        description="Add a commitment or seed your recurring templates from the top bar."
+                      />
+                    ) : (
+                      <div className="overflow-hidden rounded-xl border border-[var(--line)] bg-[var(--surface)]">
+                        {rangeTimelines.map((dt) => {
+                          const items = [...dt.allDayItems, ...dt.timedItems];
+                          if (items.length === 0) return null;
+                          return (
+                            <div
+                              key={dt.dateStr}
+                              className="border-b border-[var(--line)] last:border-b-0"
+                            >
+                              <div className="flex items-center justify-between border-b border-[var(--line)] bg-[var(--surface-2)]/60 px-4 py-2">
+                                <div className="flex items-center gap-2">
+                                  <span className="font-mono text-[12px] font-bold text-[var(--ink)]">
+                                    {dt.dateStr}
                                   </span>
-                                )}
-                                <CategoryBadge category={item.category} />
-                                <span className="text-sm font-semibold text-[#161C19] dark:text-white">
-                                  {item.title}
+                                  {dt.dateStr === today && (
+                                    <span className="rounded-[5px] bg-[var(--blue-lite)] px-1.5 py-0.5 font-mono text-[9.5px] font-bold text-[var(--blue-ink)]">
+                                      TODAY
+                                    </span>
+                                  )}
+                                </div>
+                                <span className="font-mono text-[10.5px] text-[var(--muted)]">
+                                  {items.length} item{items.length === 1 ? '' : 's'}
                                 </span>
                               </div>
-                              {item.subtitle && (
-                                <p className="mt-0.5 text-xs text-flomo-slate dark:text-morgen-body/75">
-                                  {item.subtitle}
-                                </p>
-                              )}
-                            </div>
 
-                            {item.recordedRun ? (
-                              <Link
-                                to={`/runs/${item.recordedRun.id}`}
-                                className="text-xs font-semibold text-[#176D3E] hover:underline dark:text-morgen-red"
-                              >
-                                Open Run
-                              </Link>
-                            ) : item.block ? (
-                              <div className="flex items-center gap-1.5">
-                                <button
-                                  type="button"
-                                  onClick={() => openEditBlockModal(item.block!)}
-                                  className="rounded-lg border border-[#E5EAE7] bg-white px-2.5 py-1 text-xs font-semibold text-[#161C19] hover:bg-[#F7F9F8] dark:border-morgen-border dark:bg-morgen-surface dark:text-white dark:hover:bg-morgen-elevated"
-                                >
-                                  Edit
-                                </button>
-                                <button
-                                  type="button"
-                                  onClick={() => void handleDeleteBlock(item.block!.id)}
-                                  aria-label={`Delete ${item.title}`}
-                                  className="rounded-lg border border-[#E5EAE7] p-1.5 text-flomo-slate hover:bg-red-50 hover:text-red-600 dark:border-morgen-border dark:text-morgen-muted dark:hover:bg-morgen-wine dark:hover:text-morgen-red"
-                                >
-                                  <Trash2 className="h-3.5 w-3.5" />
-                                </button>
+                              <div className="divide-y divide-[var(--line)]">
+                                {items.map((item) => (
+                                  <div
+                                    key={`${dt.dateStr}-${item.id}`}
+                                    className="flex flex-wrap items-center justify-between gap-3 px-4 py-2.5 transition-colors hover:bg-[var(--surface-2)]/50"
+                                  >
+                                    <div className="flex min-w-0 items-center gap-3">
+                                      <CategoryMark category={item.category} size="sm" />
+                                      <span className="w-[52px] shrink-0 font-mono text-[11px] text-[var(--muted)]">
+                                        {item.startMin !== null
+                                          ? formatMinutesToTime(item.startMin)
+                                          : 'All-day'}
+                                      </span>
+                                      <div className="min-w-0">
+                                        <div
+                                          className={`truncate text-[13px] font-semibold text-[var(--ink)] ${
+                                            item.isCompleted ? 'line-through opacity-55' : ''
+                                          }`}
+                                        >
+                                          {item.title}
+                                        </div>
+                                        <div className="truncate text-[11px] text-[var(--muted)]">
+                                          {CATEGORY_SHORT_LABELS[item.category]}
+                                          {item.subtitle ? ` · ${item.subtitle}` : ''}
+                                        </div>
+                                      </div>
+                                    </div>
+
+                                    {item.recordedRun ? (
+                                      <Link
+                                        to={`/runs/${item.recordedRun.id}`}
+                                        className="rounded-md border border-[var(--line)] px-2.5 py-1 text-[11.5px] font-semibold text-[var(--blue)] hover:bg-[var(--blue-lite)]"
+                                      >
+                                        Open Run
+                                      </Link>
+                                    ) : item.block ? (
+                                      <div className="flex items-center gap-1.5">
+                                        <button
+                                          type="button"
+                                          onClick={() => openEditBlockModal(item.block!)}
+                                          className="rounded-md border border-[var(--line)] bg-[var(--surface)] px-2.5 py-1 text-[11px] font-semibold text-[var(--ink)] transition-colors hover:bg-[var(--surface-2)]"
+                                        >
+                                          Edit
+                                        </button>
+                                        <button
+                                          type="button"
+                                          onClick={() => void handleDeleteBlock(item.block!.id)}
+                                          aria-label={`Delete ${item.title}`}
+                                          className="rounded-md border border-[var(--line)] p-1.5 text-[var(--muted)] transition-colors hover:bg-red-500/10 hover:text-red-600 dark:hover:text-red-400"
+                                        >
+                                          <Trash2 className="h-3.5 w-3.5" />
+                                        </button>
+                                      </div>
+                                    ) : null}
+                                  </div>
+                                ))}
                               </div>
-                            ) : null}
-                          </Card>
-                        ))}
+                            </div>
+                          );
+                        })}
                       </div>
-                    );
-                  })
-                )}
-              </div>
-            </div>
+                    )}
+                  </div>
+                </div>
+              );
+            })()
           )}
         </div>
       </div>
-
       {showBlockModal && user && (
         <ScheduleBlockModal
           initialBlock={modalInitialBlock}

@@ -1,7 +1,7 @@
-import { useEffect, useMemo, useState } from 'react';
+﻿import { useEffect, useMemo, useState } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
-import { AlertTriangle, ArrowLeft, Edit3, Sparkles, Trash2 } from 'lucide-react';
-import { Button, Card, CategoryBadge, PageHeader, ProvenanceBadge } from '@/design-system';
+import { AlertTriangle, ArrowLeft, ArrowRight, Edit3, Sparkles, Trash2 } from 'lucide-react';
+import { Button, CategoryBadge, CategoryMark, ProvenanceBadge } from '@/design-system';
 import { formatDurationSeconds } from '@/lib/datetime';
 import { useAuth } from '@/modules/auth/AuthContext';
 import {
@@ -56,7 +56,7 @@ export function RunDetailPage() {
   }
 
   if (loading) {
-    return <div className="py-12 text-center text-sm text-slate-500">Loading session...</div>;
+    return <div className="py-12 text-center text-sm text-[var(--muted)]">Loading session...</div>;
   }
 
   if (error || !session) {
@@ -64,12 +64,14 @@ export function RunDetailPage() {
       <div className="space-y-4">
         <Link
           to="/runs"
-          className="inline-flex items-center gap-1.5 text-sm font-medium text-brand-run hover:underline"
+          className="inline-flex items-center gap-1.5 text-sm font-semibold text-[var(--blue)] hover:underline"
         >
           <ArrowLeft className="h-4 w-4" />
           <span>Back to Running Log</span>
         </Link>
-        <Card className="p-6 text-sm text-red-700">{error ?? 'Session not found.'}</Card>
+        <div className="rounded-2xl border border-red-300/60 bg-red-500/10 p-6 text-sm text-red-700 dark:text-red-300">
+          {error ?? 'Session not found.'}
+        </div>
       </div>
     );
   }
@@ -78,100 +80,135 @@ export function RunDetailPage() {
   const minPace = Math.min(...splitAnalysis.splitsWithPace.map((s) => s.paceSecPerKm), maxPace);
 
   return (
-    <div>
-      <div className="mb-4">
+    <div className="space-y-5">
+      <div>
         <Link
           to="/runs"
-          className="inline-flex items-center gap-1.5 text-sm font-medium text-slate-600 hover:text-slate-900"
+          className="inline-flex items-center gap-1.5 text-[12.5px] font-semibold text-[var(--muted)] transition-colors hover:text-[var(--ink)]"
         >
           <ArrowLeft className="h-4 w-4" />
-          <span>Back to Running Log</span>
+          <span>Back to all runs</span>
         </Link>
       </div>
 
-      <PageHeader
-        title={`${formatDistanceKm(session.distance_m)} · ${WORKOUT_TYPE_LABELS[session.workout_type]}`}
-        subtitle={`Recorded on ${session.session_date}${
-          session.start_time ? ` at ${session.start_time.slice(0, 5)}` : ''
-        } · ${session.is_indoor ? 'Indoor / Treadmill' : 'Outdoor'}`}
-        action={
+      {/* Main Stride Run Detail Card */}
+      <section className="rounded-2xl border border-[var(--line)] bg-[var(--surface)] p-5 sm:p-6">
+        <div className="flex flex-col justify-between gap-4 sm:flex-row sm:items-start">
+          <div className="flex items-start gap-3.5">
+            <CategoryMark category="RUNNING" />
+            <div>
+              <div className="flex flex-wrap items-center gap-2">
+                <span className="text-[10.5px] font-bold uppercase tracking-[0.12em] text-[var(--muted)]">
+                  RECORDED SESSION
+                </span>
+                <ProvenanceBadge origin={session.data_origin} />
+              </div>
+              <h1 className="mt-1.5 text-[24px] font-bold leading-tight tracking-[-0.04em] text-[var(--ink)] sm:text-[28px]">
+                {formatDistanceKm(session.distance_m)} · {WORKOUT_TYPE_LABELS[session.workout_type]}
+              </h1>
+              <p className="mt-1 font-mono text-[12px] text-[var(--muted)]">
+                {session.session_date}
+                {session.start_time ? ` · ${session.start_time.slice(0, 5)}` : ''} ·{' '}
+                {session.is_indoor ? 'Indoor / Treadmill' : 'Outdoor'}
+              </p>
+            </div>
+          </div>
+
           <div className="flex flex-wrap items-center gap-2">
-            <Button variant="secondary" onClick={() => setEditing(true)}>
-              <Edit3 className="h-4 w-4" />
+            <Button
+              variant="secondary"
+              onClick={() => setEditing(true)}
+              className="!min-h-[36px] !px-3.5 !py-1.5 !text-[12px]"
+            >
+              <Edit3 className="h-3.5 w-3.5" />
               <span>Edit</span>
             </Button>
-            <Button variant="secondary" onClick={() => void handleDelete()}>
-              <Trash2 className="h-4 w-4 text-red-600" />
-              <span className="text-red-700">Delete</span>
-            </Button>
-          </div>
-        }
-      />
-
-      {session.is_historical_record && (
-        <div className="mb-6 rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-xs text-amber-900">
-          <strong>Historical Benchmark Record:</strong> Preserved from your reported August 2026
-          history. Unrecorded splits and telemetry remain intentionally missing.
-        </div>
-      )}
-
-      {session.pain_present && (
-        <div className="mb-6 flex items-start gap-2.5 rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-800">
-          <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
-          <div>
-            <strong>Pain / Discomfort Reported:</strong>{' '}
-            {session.pain_details ?? 'Present (no additional details entered).'}
+            <button
+              type="button"
+              onClick={() => void handleDelete()}
+              aria-label="Delete run"
+              className="inline-flex h-9 items-center gap-1.5 rounded-[9px] border border-[var(--line-strong)] bg-[var(--surface)] px-3 text-[12px] font-semibold text-red-600 transition-colors hover:bg-red-500/10 dark:text-red-400"
+            >
+              <Trash2 className="h-3.5 w-3.5" />
+              <span>Delete</span>
+            </button>
           </div>
         </div>
-      )}
 
-      <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
-        <Card className="p-4">
-          <div className="flex items-center justify-between">
-            <span className="text-xs font-medium uppercase text-slate-500">Distance</span>
-            <ProvenanceBadge origin="RECORDED" />
+        {session.is_historical_record && (
+          <div className="mt-4 rounded-xl border border-amber-400/40 bg-amber-500/10 px-4 py-3 text-xs text-amber-800 dark:text-amber-300">
+            <strong>Historical Benchmark Record:</strong> Preserved from your reported August 2026
+            history. Unrecorded splits and telemetry remain intentionally missing.
           </div>
-          <div className="mt-2 font-mono text-2xl font-semibold text-slate-900 tabular-nums">
-            {formatDistanceKm(session.distance_m)}
-          </div>
-        </Card>
+        )}
 
-        <Card className="p-4">
-          <div className="flex items-center justify-between">
-            <span className="text-xs font-medium uppercase text-slate-500">Duration</span>
-            <ProvenanceBadge origin="RECORDED" />
+        {session.pain_present && (
+          <div className="mt-4 flex items-start gap-2.5 rounded-xl border border-red-400/40 bg-red-500/10 px-4 py-3 text-xs text-red-700 dark:text-red-300">
+            <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
+            <div>
+              <strong>Pain / Discomfort Reported:</strong>{' '}
+              {session.pain_details ?? 'Present (no additional details entered).'}
+            </div>
           </div>
-          <div className="mt-2 font-mono text-2xl font-semibold text-slate-900 tabular-nums">
-            {formatDurationSeconds(session.duration_s)}
-          </div>
-        </Card>
+        )}
 
-        <Card className="p-4">
-          <div className="flex items-center justify-between">
-            <span className="text-xs font-medium uppercase text-slate-500">Average Pace</span>
-            <ProvenanceBadge origin="CALCULATED" />
+        {/* Stride 4-Column Metric Bar */}
+        <div className="mt-5 grid grid-cols-2 divide-y divide-[var(--line)] rounded-xl border border-[var(--line)] bg-[var(--surface-2)] sm:grid-cols-4 sm:divide-x sm:divide-y-0">
+          <div className="px-4 py-4">
+            <div className="flex items-center justify-between gap-2">
+              <span className="text-[11px] font-semibold text-[var(--muted)]">Distance</span>
+              <ProvenanceBadge origin="RECORDED" />
+            </div>
+            <strong className="mt-2 block font-mono text-[24px] font-bold tracking-[-0.04em] text-[var(--ink)] tabular-nums">
+              {formatDistanceKm(session.distance_m)}
+            </strong>
           </div>
-          <div className="mt-2 font-mono text-2xl font-semibold text-brand-run tabular-nums">
-            {formatPace(session.distance_m, session.duration_s)}
-          </div>
-        </Card>
 
-        <Card className="p-4">
-          <div className="flex items-center justify-between">
-            <span className="text-xs font-medium uppercase text-slate-500">Effort (RPE)</span>
-            <ProvenanceBadge origin={session.rpe ? 'RECORDED' : 'MISSING'} />
+          <div className="px-4 py-4">
+            <div className="flex items-center justify-between gap-2">
+              <span className="text-[11px] font-semibold text-[var(--muted)]">Duration</span>
+              <ProvenanceBadge origin="RECORDED" />
+            </div>
+            <strong className="mt-2 block font-mono text-[24px] font-bold tracking-[-0.04em] text-[var(--ink)] tabular-nums">
+              {formatDurationSeconds(session.duration_s)}
+            </strong>
           </div>
-          <div className="mt-2 font-mono text-2xl font-semibold text-slate-900 tabular-nums">
-            {session.rpe ? `${session.rpe} / 10` : 'Missing'}
-          </div>
-        </Card>
-      </div>
 
-      <Card className="mt-6 p-6">
+          <div className="px-4 py-4">
+            <div className="flex items-center justify-between gap-2">
+              <span className="text-[11px] font-semibold text-[var(--muted)]">Average pace</span>
+              <ProvenanceBadge origin="CALCULATED" />
+            </div>
+            <strong className="mt-2 block font-mono text-[24px] font-bold tracking-[-0.04em] text-[var(--run)] tabular-nums">
+              {formatPace(session.distance_m, session.duration_s)}
+            </strong>
+          </div>
+
+          <div className="px-4 py-4">
+            <div className="flex items-center justify-between gap-2">
+              <span className="text-[11px] font-semibold text-[var(--muted)]">Effort (RPE)</span>
+              <ProvenanceBadge origin={session.rpe ? 'RECORDED' : 'MISSING'} />
+            </div>
+            <strong className="mt-2 block font-mono text-[24px] font-bold tracking-[-0.04em] text-[var(--ink)] tabular-nums">
+              {session.rpe ? `${session.rpe} / 10` : '—'}
+            </strong>
+          </div>
+        </div>
+      </section>
+
+      {/* Kilometer Split Analysis */}
+      <section className="rounded-2xl border border-[var(--line)] bg-[var(--surface)] p-5 sm:p-6">
         <div className="flex flex-col justify-between gap-2 sm:flex-row sm:items-center">
           <div>
-            <h2 className="text-base font-semibold text-slate-900">Kilometer Split Analysis</h2>
-            <p className="mt-0.5 text-sm text-slate-600">{splitAnalysis.patternSummary}</p>
+            <div className="text-[10.5px] font-bold uppercase tracking-[0.12em] text-[var(--muted)]">
+              PACING BREAKDOWN
+            </div>
+            <h2 className="mt-1 text-[18px] font-bold tracking-[-0.03em] text-[var(--ink)]">
+              Kilometer Split Analysis
+            </h2>
+            <p className="mt-0.5 text-[12.5px] text-[var(--muted)]">
+              {splitAnalysis.patternSummary}
+            </p>
           </div>
           <ProvenanceBadge
             origin={splitAnalysis.splitsWithPace.length > 0 ? 'RECORDED' : 'MISSING'}
@@ -179,39 +216,39 @@ export function RunDetailPage() {
         </div>
 
         {splitAnalysis.splitsWithPace.length === 0 ? (
-          <div className="mt-4 rounded-lg border border-dashed border-slate-200 bg-slate-50 px-4 py-8 text-center text-sm text-slate-500">
+          <div className="mt-4 rounded-xl border border-dashed border-[var(--line-strong)] bg-[var(--bg)] px-4 py-7 text-center text-xs text-[var(--muted)]">
             No splits were recorded for this session. Splits are never estimated or fabricated.
           </div>
         ) : (
           <>
-            <div className="mt-4 grid gap-3 sm:grid-cols-4">
-              <div className="rounded-lg border border-slate-200 bg-slate-50 p-3">
-                <div className="text-xs text-slate-500">Fastest Split</div>
-                <div className="mt-1 font-mono text-sm font-semibold text-emerald-700">
+            <div className="mt-4 grid grid-cols-2 gap-2.5 sm:grid-cols-4">
+              <div className="rounded-xl border border-[var(--line)] bg-[var(--bg)] p-3">
+                <div className="text-[11px] text-[var(--muted)]">Fastest Split</div>
+                <div className="mt-1 font-mono text-[13px] font-bold text-[#2D9D87]">
                   {splitAnalysis.fastestSplit
                     ? `Km ${splitAnalysis.fastestSplit.split_index} · ${splitAnalysis.fastestSplit.formattedPace}`
                     : '—'}
                 </div>
               </div>
-              <div className="rounded-lg border border-slate-200 bg-slate-50 p-3">
-                <div className="text-xs text-slate-500">Slowest Split</div>
-                <div className="mt-1 font-mono text-sm font-semibold text-slate-900">
+              <div className="rounded-xl border border-[var(--line)] bg-[var(--bg)] p-3">
+                <div className="text-[11px] text-[var(--muted)]">Slowest Split</div>
+                <div className="mt-1 font-mono text-[13px] font-bold text-[var(--ink)]">
                   {splitAnalysis.slowestSplit
                     ? `Km ${splitAnalysis.slowestSplit.split_index} · ${splitAnalysis.slowestSplit.formattedPace}`
                     : '—'}
                 </div>
               </div>
-              <div className="rounded-lg border border-slate-200 bg-slate-50 p-3">
-                <div className="text-xs text-slate-500">Pace Spread</div>
-                <div className="mt-1 font-mono text-sm font-semibold text-slate-900">
+              <div className="rounded-xl border border-[var(--line)] bg-[var(--bg)] p-3">
+                <div className="text-[11px] text-[var(--muted)]">Pace Spread</div>
+                <div className="mt-1 font-mono text-[13px] font-bold text-[var(--ink)]">
                   {splitAnalysis.paceSpreadSec !== null
                     ? `${splitAnalysis.paceSpreadSec}s /km`
                     : '—'}
                 </div>
               </div>
-              <div className="rounded-lg border border-slate-200 bg-slate-50 p-3">
-                <div className="text-xs text-slate-500">Consistency (CV)</div>
-                <div className="mt-1 font-mono text-sm font-semibold text-slate-900">
+              <div className="rounded-xl border border-[var(--line)] bg-[var(--bg)] p-3">
+                <div className="text-[11px] text-[var(--muted)]">Consistency (CV)</div>
+                <div className="mt-1 font-mono text-[13px] font-bold text-[var(--ink)]">
                   {splitAnalysis.coefficientOfVariationPct !== null
                     ? `${splitAnalysis.coefficientOfVariationPct}%`
                     : '—'}
@@ -219,7 +256,7 @@ export function RunDetailPage() {
               </div>
             </div>
 
-            <div className="mt-5 space-y-2.5">
+            <div className="mt-5 space-y-2">
               {splitAnalysis.splitsWithPace.map((s) => {
                 const range = Math.max(maxPace - minPace, 15);
                 const relativeSpeed = 1 - (s.paceSecPerKm - minPace) / range;
@@ -228,28 +265,28 @@ export function RunDetailPage() {
 
                 return (
                   <div key={s.id} className="grid grid-cols-12 items-center gap-3 text-xs">
-                    <div className="col-span-3 font-mono text-slate-700 sm:col-span-2">
+                    <div className="col-span-3 font-mono text-[var(--muted)] sm:col-span-2">
                       Km {s.split_index}{' '}
                       {s.is_partial && (
-                        <span className="text-slate-400">
+                        <span className="text-[var(--faint)]">
                           ({(s.distance_m / 1000).toFixed(2)}k)
                         </span>
                       )}
                     </div>
                     <div className="col-span-5 sm:col-span-7">
-                      <div className="h-6 w-full rounded bg-slate-100 p-0.5">
+                      <div className="h-5 w-full rounded-md bg-[var(--surface-2)] p-0.5">
                         <div
                           style={{ width: `${widthPct}%` }}
-                          className={`h-full rounded ${
-                            isFastest ? 'bg-emerald-600' : 'bg-brand-run'
+                          className={`h-full rounded-[4px] ${
+                            isFastest ? 'bg-[#4F846E]' : 'bg-[var(--run)]'
                           }`}
                         />
                       </div>
                     </div>
-                    <div className="col-span-4 text-right font-mono font-medium text-slate-900 tabular-nums sm:col-span-3">
+                    <div className="col-span-4 text-right font-mono font-semibold text-[var(--ink)] tabular-nums sm:col-span-3">
                       {s.formattedPace}
                       {s.avg_hr_bpm ? (
-                        <span className="ml-2 text-slate-400">{s.avg_hr_bpm}bpm</span>
+                        <span className="ml-2 text-[var(--faint)]">{s.avg_hr_bpm}bpm</span>
                       ) : null}
                     </div>
                   </div>
@@ -258,78 +295,86 @@ export function RunDetailPage() {
             </div>
           </>
         )}
-      </Card>
+      </section>
 
-      <div className="mt-6 grid gap-6 lg:grid-cols-2">
-        <Card className="p-6">
+      {/* Bottom 2-Column Telemetry & Notes */}
+      <div className="grid gap-5 lg:grid-cols-2">
+        <section className="rounded-2xl border border-[var(--line)] bg-[var(--surface)] p-5 sm:p-6">
           <div className="flex items-center justify-between">
-            <h2 className="text-base font-semibold text-slate-900">Physiological &amp; Readiness</h2>
+            <h2 className="text-[16px] font-bold tracking-[-0.03em] text-[var(--ink)]">
+              Physiological &amp; Readiness
+            </h2>
             <CategoryBadge category="RUNNING" />
           </div>
-          <dl className="mt-4 divide-y divide-slate-100 text-sm">
+          <dl className="mt-4 divide-y divide-[var(--line)] text-[13px]">
             <div className="flex justify-between py-2.5">
-              <dt className="text-slate-600">Average Heart Rate</dt>
-              <dd className="font-mono text-slate-900">
+              <dt className="text-[var(--muted)]">Average Heart Rate</dt>
+              <dd className="font-mono font-semibold text-[var(--ink)]">
                 {session.avg_hr_bpm ? `${session.avg_hr_bpm} bpm` : 'Missing'}
               </dd>
             </div>
             <div className="flex justify-between py-2.5">
-              <dt className="text-slate-600">Max Heart Rate</dt>
-              <dd className="font-mono text-slate-900">
+              <dt className="text-[var(--muted)]">Max Heart Rate</dt>
+              <dd className="font-mono font-semibold text-[var(--ink)]">
                 {session.max_hr_bpm ? `${session.max_hr_bpm} bpm` : 'Missing'}
               </dd>
             </div>
             <div className="flex justify-between py-2.5">
-              <dt className="text-slate-600">Cadence</dt>
-              <dd className="font-mono text-slate-900">
+              <dt className="text-[var(--muted)]">Cadence</dt>
+              <dd className="font-mono font-semibold text-[var(--ink)]">
                 {session.cadence_spm ? `${session.cadence_spm} spm` : 'Missing'}
               </dd>
             </div>
             <div className="flex justify-between py-2.5">
-              <dt className="text-slate-600">Elevation Gain</dt>
-              <dd className="font-mono text-slate-900">
+              <dt className="text-[var(--muted)]">Elevation Gain</dt>
+              <dd className="font-mono font-semibold text-[var(--ink)]">
                 {session.elevation_gain_m !== null ? `${session.elevation_gain_m} m` : 'Missing'}
               </dd>
             </div>
             <div className="flex justify-between py-2.5">
-              <dt className="text-slate-600">Energy / Muscle Soreness</dt>
-              <dd className="font-mono text-slate-900">
+              <dt className="text-[var(--muted)]">Energy / Muscle Soreness</dt>
+              <dd className="font-mono font-semibold text-[var(--ink)]">
                 {session.energy_level ? `Energy ${session.energy_level}/5` : 'Energy —'} ·{' '}
                 {session.muscle_soreness ? `Soreness ${session.muscle_soreness}/5` : 'Soreness —'}
               </dd>
             </div>
           </dl>
-        </Card>
+        </section>
 
-        <Card className="flex flex-col justify-between p-6">
+        <section className="flex flex-col justify-between rounded-2xl border border-[var(--line)] bg-[var(--surface)] p-5 sm:p-6">
           <div>
-            <h2 className="text-base font-semibold text-slate-900">Conditions &amp; Notes</h2>
-            <p className="mt-3 text-sm text-slate-700">
-              <span className="font-medium text-slate-900">Conditions:</span>{' '}
+            <h2 className="text-[16px] font-bold tracking-[-0.03em] text-[var(--ink)]">
+              Conditions &amp; Notes
+            </h2>
+            <p className="mt-3 text-[13px] leading-relaxed text-[var(--muted)]">
+              <span className="font-semibold text-[var(--ink)]">Conditions:</span>{' '}
               {session.conditions ?? 'Not recorded'}
             </p>
-            <p className="mt-3 text-sm text-slate-700">
-              <span className="font-medium text-slate-900">Notes:</span>{' '}
+            <p className="mt-3 text-[13px] leading-relaxed text-[var(--muted)]">
+              <span className="font-semibold text-[var(--ink)]">Notes:</span>{' '}
               {session.notes ?? 'No session notes recorded.'}
             </p>
           </div>
 
-          <div className="mt-6 rounded-lg border border-slate-200 bg-slate-50 p-3.5">
-            <div className="flex items-center justify-between gap-2">
-              <div className="flex items-center gap-2 text-xs font-medium text-slate-700">
-                <Sparkles className="h-4 w-4 text-brand-run" />
-                <span>AI Session Analysis (Stage 7)</span>
+          <div className="mt-5 flex items-center justify-between gap-3 rounded-xl border border-[var(--line)] bg-[var(--blue-lite)]/60 p-4">
+            <div className="min-w-0">
+              <div className="flex items-center gap-1.5 text-[12px] font-bold text-[var(--ink)]">
+                <Sparkles className="h-3.5 w-3.5 text-[var(--blue)]" />
+                <span>Discuss this run with Coach</span>
               </div>
-              <Button variant="secondary" disabled className="min-h-[34px] px-3 py-1 text-xs">
-                Analyze Run
-              </Button>
+              <p className="mt-0.5 text-[11.5px] text-[var(--muted)]">
+                Your recorded splits, pace, and readiness are already synced.
+              </p>
             </div>
-            <p className="mt-1.5 text-xs text-slate-500">
-              Gemini single-run grounded analysis activates in Stage 7 once the server-side AI
-              pipeline is connected.
-            </p>
+            <Link
+              to="/coach"
+              className="inline-flex h-8 shrink-0 items-center gap-1.5 rounded-[8px] bg-[var(--blue)] px-3 text-[11.5px] font-bold text-white transition-opacity hover:opacity-90 dark:text-[#121315]"
+            >
+              <span>Open Coach</span>
+              <ArrowRight className="h-3.5 w-3.5" />
+            </Link>
           </div>
-        </Card>
+        </section>
       </div>
 
       {editing && user && (

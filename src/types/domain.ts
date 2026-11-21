@@ -59,10 +59,10 @@ export interface UserProfile {
 }
 
 export const TRAINING_PHASE_LABELS: Record<TrainingPhase, string> = {
-  REBUILDING: 'Phase 1 â€” Rebuilding',
-  BUILDING_CONSISTENCY: 'Phase 2 â€” Building Consistency',
-  PERFORMANCE_DEVELOPMENT: 'Phase 3 â€” Performance Development',
-  GOAL_SPECIFIC_5K: 'Phase 4 â€” Goal-Specific 5K Training',
+  REBUILDING: 'Phase 1 — Rebuilding',
+  BUILDING_CONSISTENCY: 'Phase 2 — Building Consistency',
+  PERFORMANCE_DEVELOPMENT: 'Phase 3 — Performance Development',
+  GOAL_SPECIFIC_5K: 'Phase 4 — Goal-Specific 5K Training',
 };
 
 export type WorkoutType =

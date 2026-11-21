@@ -1,6 +1,6 @@
-import { useState, type FormEvent } from 'react';
+﻿import { useEffect, useState, type FormEvent } from 'react';
 import { HeartPulse, X } from 'lucide-react';
-import { Button, Card } from '@/design-system';
+import { Button } from '@/design-system';
 import type { ReadinessCheckIn, ReadinessCheckInDraft } from '@/types/domain';
 
 export function ReadinessCheckInModal({
@@ -29,6 +29,14 @@ export function ReadinessCheckInModal({
 
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') onClose();
+    };
+    window.addEventListener('keydown', onKeyDown);
+    return () => window.removeEventListener('keydown', onKeyDown);
+  }, [onClose]);
 
   async function handleSubmit(e: FormEvent) {
     e.preventDefault();
@@ -61,15 +69,33 @@ export function ReadinessCheckInModal({
     }
   }
 
+  const inputClass =
+    'mt-1 block w-full rounded-[9px] border border-[var(--line-strong)] bg-[var(--input-bg)] px-3 py-2 text-[13px] text-[var(--ink)] placeholder:text-[var(--faint)] focus:border-[var(--blue)] focus:outline-none';
+  const labelClass = 'block text-[11.5px] font-semibold text-[var(--muted)]';
+
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center overflow-y-auto bg-slate-900/45 p-4">
-      <Card className="my-auto max-h-[92vh] w-full max-w-xl overflow-y-auto p-6">
-        <div className="flex items-center justify-between border-b border-slate-200 pb-4">
-          <div className="flex items-center gap-2">
-            <HeartPulse className="h-5 w-5 text-emerald-700" />
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center bg-black/55 p-4 backdrop-blur-[2px]"
+      onMouseDown={(e) => {
+        if (e.target === e.currentTarget) onClose();
+      }}
+    >
+      <div
+        role="dialog"
+        aria-modal="true"
+        aria-label="Daily Readiness Check-In"
+        className="max-h-[92vh] w-full max-w-[560px] overflow-y-auto rounded-2xl border border-[var(--line)] bg-[var(--surface)] p-5 text-[var(--ink)] shadow-2xl sm:p-6"
+      >
+        <div className="flex items-start justify-between gap-3 border-b border-[var(--line)] pb-3.5">
+          <div className="flex items-center gap-3">
+            <div className="grid h-9 w-9 shrink-0 place-items-center rounded-xl bg-[var(--blue-lite)] text-[var(--blue)]">
+              <HeartPulse className="h-4 w-4" />
+            </div>
             <div>
-              <h2 className="text-lg font-semibold text-slate-900">Daily Readiness Check-In</h2>
-              <p className="text-xs text-slate-500">
+              <h2 className="text-[19px] font-bold tracking-[-0.035em] text-[var(--ink)]">
+                Daily Readiness Check-In
+              </h2>
+              <p className="text-[11.5px] text-[var(--muted)]">
                 Leave unmeasured fields blank — readiness only calculates from recorded inputs.
               </p>
             </div>
@@ -78,27 +104,27 @@ export function ReadinessCheckInModal({
             type="button"
             onClick={onClose}
             aria-label="Close readiness modal"
-            className="flex h-9 w-9 items-center justify-center rounded-lg text-slate-500 hover:bg-slate-100"
+            className="flex h-8 w-8 items-center justify-center rounded-lg text-[var(--muted)] transition-colors hover:bg-[var(--surface-2)] hover:text-[var(--ink)]"
           >
-            <X className="h-5 w-5" />
+            <X className="h-4 w-4" />
           </button>
         </div>
 
-        <form onSubmit={handleSubmit} className="mt-5 space-y-4">
-          <div className="grid gap-4 sm:grid-cols-2">
+        <form onSubmit={handleSubmit} className="mt-4 space-y-3.5">
+          <div className="grid gap-3 sm:grid-cols-2">
             <div>
-              <label className="block text-xs font-medium text-slate-700">Date *</label>
+              <label className={labelClass}>Date *</label>
               <input
                 type="date"
                 required
                 value={checkinDate}
                 onChange={(e) => setCheckinDate(e.target.value)}
-                className="mt-1 block w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm"
+                className={`${inputClass} font-mono`}
               />
             </div>
 
             <div>
-              <label className="block text-xs font-medium text-slate-700">Sleep Hours</label>
+              <label className={labelClass}>Sleep Hours</label>
               <input
                 type="number"
                 step="0.25"
@@ -107,14 +133,12 @@ export function ReadinessCheckInModal({
                 placeholder="7.5"
                 value={sleepHours}
                 onChange={(e) => setSleepHours(e.target.value)}
-                className="mt-1 block w-full rounded-lg border border-slate-300 bg-white px-3 py-2 font-mono text-sm"
+                className={`${inputClass} font-mono`}
               />
             </div>
 
             <div>
-              <label className="block text-xs font-medium text-slate-700">
-                Sleep Quality (1–5)
-              </label>
+              <label className={labelClass}>Sleep Quality (1–5)</label>
               <input
                 type="number"
                 min="1"
@@ -122,12 +146,12 @@ export function ReadinessCheckInModal({
                 placeholder="4"
                 value={sleepQuality}
                 onChange={(e) => setSleepQuality(e.target.value)}
-                className="mt-1 block w-full rounded-lg border border-slate-300 bg-white px-3 py-2 font-mono text-sm"
+                className={`${inputClass} font-mono`}
               />
             </div>
 
             <div>
-              <label className="block text-xs font-medium text-slate-700">Energy Level (1–5)</label>
+              <label className={labelClass}>Energy Level (1–5)</label>
               <input
                 type="number"
                 min="1"
@@ -135,14 +159,12 @@ export function ReadinessCheckInModal({
                 placeholder="4"
                 value={energyLevel}
                 onChange={(e) => setEnergyLevel(e.target.value)}
-                className="mt-1 block w-full rounded-lg border border-slate-300 bg-white px-3 py-2 font-mono text-sm"
+                className={`${inputClass} font-mono`}
               />
             </div>
 
             <div>
-              <label className="block text-xs font-medium text-slate-700">
-                Muscle Soreness (1=None, 5=Severe)
-              </label>
+              <label className={labelClass}>Muscle Soreness (1=None, 5=Severe)</label>
               <input
                 type="number"
                 min="1"
@@ -150,14 +172,12 @@ export function ReadinessCheckInModal({
                 placeholder="2"
                 value={muscleSoreness}
                 onChange={(e) => setMuscleSoreness(e.target.value)}
-                className="mt-1 block w-full rounded-lg border border-slate-300 bg-white px-3 py-2 font-mono text-sm"
+                className={`${inputClass} font-mono`}
               />
             </div>
 
             <div>
-              <label className="block text-xs font-medium text-slate-700">
-                Stress Level (1=Low, 5=High)
-              </label>
+              <label className={labelClass}>Stress Level (1=Low, 5=High)</label>
               <input
                 type="number"
                 min="1"
@@ -165,14 +185,12 @@ export function ReadinessCheckInModal({
                 placeholder="2"
                 value={stressLevel}
                 onChange={(e) => setStressLevel(e.target.value)}
-                className="mt-1 block w-full rounded-lg border border-slate-300 bg-white px-3 py-2 font-mono text-sm"
+                className={`${inputClass} font-mono`}
               />
             </div>
 
             <div>
-              <label className="block text-xs font-medium text-slate-700">
-                Resting HR (bpm, optional)
-              </label>
+              <label className={labelClass}>Resting HR (bpm, optional)</label>
               <input
                 type="number"
                 min="30"
@@ -180,17 +198,17 @@ export function ReadinessCheckInModal({
                 placeholder="—"
                 value={restingHr}
                 onChange={(e) => setRestingHr(e.target.value)}
-                className="mt-1 block w-full rounded-lg border border-slate-300 bg-white px-3 py-2 font-mono text-sm"
+                className={`${inputClass} font-mono`}
               />
             </div>
 
-            <div className="flex items-end pb-1">
-              <label className="flex items-center gap-2 text-sm text-slate-700">
+            <div className="flex items-end pb-2">
+              <label className="flex cursor-pointer items-center gap-2 text-[12.5px] font-semibold text-[var(--ink)]">
                 <input
                   type="checkbox"
                   checked={painPresent}
                   onChange={(e) => setPainPresent(e.target.checked)}
-                  className="h-4 w-4 rounded border-slate-300 text-red-600"
+                  className="h-4 w-4 rounded accent-red-600"
                 />
                 <span>Pain or tightness present</span>
               </label>
@@ -199,44 +217,55 @@ export function ReadinessCheckInModal({
 
           {painPresent && (
             <div>
-              <label className="block text-xs font-medium text-red-700">Pain Details</label>
+              <label className="block text-[11.5px] font-semibold text-red-600 dark:text-red-400">
+                Pain Details
+              </label>
               <input
                 type="text"
                 placeholder="Location, intensity, whether sharp or dull..."
                 value={painDetails}
                 onChange={(e) => setPainDetails(e.target.value)}
-                className="mt-1 block w-full rounded-lg border border-red-300 bg-red-50/40 px-3 py-2 text-sm"
+                className="mt-1 block w-full rounded-[9px] border border-red-400/50 bg-red-500/10 px-3 py-2 text-[13px] text-[var(--ink)] focus:border-red-500 focus:outline-none"
               />
             </div>
           )}
 
           <div>
-            <label className="block text-xs font-medium text-slate-700">Notes</label>
+            <label className={labelClass}>Notes</label>
             <input
               type="text"
               placeholder="e.g. Legs felt heavy after Friday karate"
               value={notes}
               onChange={(e) => setNotes(e.target.value)}
-              className="mt-1 block w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm"
+              className={inputClass}
             />
           </div>
 
           {error && (
-            <div className="rounded-lg border border-red-200 bg-red-50 px-3.5 py-2.5 text-sm text-red-700">
+            <div className="rounded-xl border border-red-400/40 bg-red-500/10 px-3.5 py-2.5 text-xs font-semibold text-red-700 dark:text-red-300">
               {error}
             </div>
           )}
 
-          <div className="flex justify-end gap-3 border-t border-slate-200 pt-4">
-            <Button type="button" variant="secondary" onClick={onClose}>
+          <div className="flex justify-end gap-2.5 border-t border-[var(--line)] pt-4">
+            <Button
+              type="button"
+              variant="secondary"
+              onClick={onClose}
+              className="!min-h-[38px] !px-4 !text-[12.5px]"
+            >
               Cancel
             </Button>
-            <Button type="submit" disabled={submitting}>
+            <button
+              type="submit"
+              disabled={submitting}
+              className="inline-flex h-[38px] items-center justify-center rounded-[9px] bg-[var(--blue)] px-4 text-[12.5px] font-bold text-white transition-opacity hover:opacity-90 disabled:opacity-50 dark:text-[#121315]"
+            >
               {submitting ? 'Saving...' : 'Save Check-In'}
-            </Button>
+            </button>
           </div>
         </form>
-      </Card>
+      </div>
     </div>
   );
 }

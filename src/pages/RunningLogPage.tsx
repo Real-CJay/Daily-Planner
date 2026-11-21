@@ -1,16 +1,17 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+﻿import { useCallback, useEffect, useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
 import {
-  Activity,
   ArrowRight,
   Camera,
+  ChevronRight,
   GitCompare,
   History,
+  Info,
   Plus,
   Search,
   Trash2,
 } from 'lucide-react';
-import { Button, Card, EmptyState, PageHeader, ProvenanceBadge } from '@/design-system';
+import { Button, CategoryMark, ProvenanceBadge } from '@/design-system';
 import { formatDurationSeconds } from '@/lib/datetime';
 import { useAuth } from '@/modules/auth/AuthContext';
 import { formatDistanceKm, formatPace } from '@/modules/running/calculations';
@@ -95,7 +96,7 @@ export function RunningLogPage() {
     const totalDurS = filteredSessions.reduce((acc, s) => acc + s.duration_s, 0);
     return {
       count: filteredSessions.length,
-      totalDistKm: formatDistanceKm(totalDistM),
+      totalDistKm: (totalDistM / 1000).toFixed(1),
       totalDurStr: formatDurationSeconds(totalDurS),
       avgPace: totalDistM > 0 && totalDurS > 0 ? formatPace(totalDistM, totalDurS) : '—',
     };
@@ -104,6 +105,16 @@ export function RunningLogPage() {
   const hasHistoricalAug2026 = useMemo(
     () => sessions.some((s) => s.is_historical_record),
     [sessions]
+  );
+
+  const hasActiveFilters = Boolean(
+    searchQuery ||
+      typeFilter !== 'ALL' ||
+      environmentFilter !== 'ALL' ||
+      minDistanceKm ||
+      minRpe ||
+      dateFrom ||
+      dateTo
   );
 
   async function handleImportAugust2026() {
@@ -150,332 +161,397 @@ export function RunningLogPage() {
   }, [selectedForCompare, sessions]);
 
   return (
-    <div className="space-y-6">
-      <PageHeader
-        title="Running Log"
-        subtitle="Verified running sessions, exact calculated paces, splits, and run-to-run comparisons."
-        action={
-          <div className="flex flex-wrap items-center gap-2">
-            {selectedForCompare.length === 2 && (
-              <Button variant="secondary" onClick={() => setShowCompareModal(true)}>
-                <GitCompare className="h-4 w-4" />
-                <span>Compare Selected (2)</span>
-              </Button>
-            )}
-            <Button variant="secondary" onClick={() => setShowScreenshotModal(true)}>
-              <Camera className="h-4 w-4" />
-              <span>Import Screenshot</span>
-            </Button>
-            <Button onClick={() => setShowCreateModal(true)}>
-              <Plus className="h-4 w-4" />
-              <span>Log Run</span>
-            </Button>
-          </div>
-        }
-      />
-
-      {!loading && sessions.length > 0 && (
-        <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
-          <div className="rounded-xl border border-slate-200 bg-white px-4 py-3">
-            <div className="text-[11px] font-semibold uppercase tracking-wider text-slate-400">
-              Showing Runs
-            </div>
-            <div className="mt-1 font-mono text-lg font-bold text-slate-900 tabular-nums">
-              {filteredSummary.count}
-            </div>
-          </div>
-          <div className="rounded-xl border border-slate-200 bg-white px-4 py-3">
-            <div className="text-[11px] font-semibold uppercase tracking-wider text-slate-400">
-              Filtered Distance
-            </div>
-            <div className="mt-1 font-mono text-lg font-bold text-slate-900 tabular-nums">
-              {filteredSummary.totalDistKm}
-            </div>
-          </div>
-          <div className="rounded-xl border border-slate-200 bg-white px-4 py-3">
-            <div className="text-[11px] font-semibold uppercase tracking-wider text-slate-400">
-              Filtered Time
-            </div>
-            <div className="mt-1 font-mono text-lg font-bold text-slate-900 tabular-nums">
-              {filteredSummary.totalDurStr}
-            </div>
-          </div>
-          <div className="rounded-xl border border-slate-200 bg-white px-4 py-3">
-            <div className="text-[11px] font-semibold uppercase tracking-wider text-slate-400">
-              Aggregate Pace
-            </div>
-            <div className="mt-1 font-mono text-lg font-bold text-blue-700 tabular-nums">
-              {filteredSummary.avgPace}
-            </div>
-          </div>
+    <div className="space-y-7">
+      {/* Stride Editorial Page Heading */}
+      <div className="flex flex-col justify-between gap-4 sm:flex-row sm:items-end">
+        <div>
+          <h1 className="text-[34px] font-bold leading-[1.08] tracking-[-0.055em] text-[var(--ink)] sm:text-[42px]">
+            Find your <em className="not-italic text-[var(--run)]">rhythm.</em>
+          </h1>
         </div>
-      )}
 
-      {!loading && !hasHistoricalAug2026 && (
-        <Card className="flex flex-col justify-between gap-4 border-blue-200 bg-blue-50/50 p-4 sm:flex-row sm:items-center">
-          <div>
-            <h2 className="text-sm font-semibold text-slate-900">
-              Import Known August 2026 Benchmarks
-            </h2>
-            <p className="mt-0.5 text-xs text-slate-600">
-              Add your two documented historical runs (Aug 13, 2026: 5.00 km in 28:10 · Aug 18,
-              2026: 5.14 km in 30:58) marked explicitly as historical records without fabricated
-              splits.
-            </p>
-          </div>
-          <Button
-            variant="secondary"
-            disabled={importingHistory}
-            onClick={() => void handleImportAugust2026()}
-            className="shrink-0 bg-white"
-          >
-            <History className="h-4 w-4" />
-            <span>{importingHistory ? 'Importing...' : 'Import Aug 2026 Records'}</span>
+        <div className="flex flex-wrap items-center gap-2 sm:pb-1">
+          {selectedForCompare.length === 2 && (
+            <Button variant="secondary" onClick={() => setShowCompareModal(true)}>
+              <GitCompare className="h-4 w-4" />
+              <span>Compare (2)</span>
+            </Button>
+          )}
+          <Button variant="secondary" onClick={() => setShowScreenshotModal(true)}>
+            <Camera className="h-4 w-4" />
+            <span>Import Screenshot</span>
           </Button>
-        </Card>
-      )}
+          <button
+            type="button"
+            onClick={() => setShowCreateModal(true)}
+            className="inline-flex h-10 items-center justify-center gap-2 rounded-[9px] bg-[var(--run)] px-4 text-[13px] font-bold text-[var(--run-btn-text)] transition-opacity hover:opacity-90 active:translate-y-px"
+          >
+            <Plus className="h-4 w-4 stroke-[2.5]" />
+            <span>Log a run</span>
+          </button>
+        </div>
+      </div>
+
+      {/* Stride 3-Column Stats Strip */}
+      <div className="grid grid-cols-1 divide-y divide-[var(--line)] rounded-2xl border border-[var(--line)] bg-[var(--surface)] sm:grid-cols-3 sm:divide-x sm:divide-y-0">
+        <div className="px-5 py-3.5">
+          <span className="text-[10.5px] font-bold tracking-[0.12em] text-[var(--muted)]">
+            {hasActiveFilters ? 'FILTERED DISTANCE' : 'TOTAL DISTANCE'}
+          </span>
+          <strong className="mt-2 block font-mono text-[28px] font-bold leading-none tracking-[-0.06em] text-[var(--run)] tabular-nums">
+            {filteredSummary.totalDistKm}{' '}
+            <small className="font-sans text-[15px] font-semibold tracking-normal text-[var(--muted)]">
+              km
+            </small>
+          </strong>
+          <p className="mt-1.5 text-[12px] text-[var(--muted)]">
+            {filteredSummary.totalDurStr} total time
+          </p>
+        </div>
+
+        <div className="px-5 py-3.5">
+          <span className="text-[10.5px] font-bold tracking-[0.12em] text-[var(--muted)]">
+            SESSIONS
+          </span>
+          <strong className="mt-2 block font-mono text-[28px] font-bold leading-none tracking-[-0.06em] text-[var(--ink)] tabular-nums">
+            {filteredSummary.count}
+          </strong>
+          <p className="mt-1.5 text-[12px] text-[var(--muted)]">Recorded runs</p>
+        </div>
+
+        <div className="px-5 py-3.5">
+          <span className="text-[10.5px] font-bold tracking-[0.12em] text-[var(--muted)]">
+            AVERAGE PACE
+          </span>
+          <strong className="mt-2 block font-mono text-[28px] font-bold leading-none tracking-[-0.06em] text-[var(--ink)] tabular-nums">
+            {filteredSummary.avgPace}
+          </strong>
+          <p className="mt-1.5 text-[12px] text-[var(--muted)]">Recorded sessions only</p>
+        </div>
+      </div>
 
       {notice && (
-        <div className="rounded-lg border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm font-medium text-emerald-900">
+        <div className="rounded-xl border border-[var(--line)] bg-[var(--run-lite)] px-4 py-3 text-xs font-semibold text-[var(--run-ink)]">
           {notice}
         </div>
       )}
 
       {error && (
-        <div className="rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm font-medium text-red-800">
+        <div className="rounded-xl border border-red-300/60 bg-red-500/10 px-4 py-3 text-xs font-semibold text-red-700 dark:text-red-300">
           {error}
         </div>
       )}
 
-      <Card className="p-4">
-        <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-6">
-          <div className="relative lg:col-span-2">
-            <Search className="pointer-events-none absolute left-3 top-2.5 h-4 w-4 text-slate-400" />
-            <input
-              type="text"
-              placeholder="Search notes, conditions, date..."
-              value={searchQuery}
-              onChange={(e) => setSearchQuery(e.target.value)}
-              className="w-full rounded-lg border border-slate-300 bg-white py-2 pl-9 pr-3 text-sm text-slate-900 focus:border-blue-600 focus:outline-none"
-            />
-          </div>
+      {/* Stride 2-Column Running Workspace */}
+      <div className="grid gap-[18px] lg:grid-cols-[minmax(0,1.68fr)_minmax(270px,0.92fr)]">
+        {/* Left: Filters + Run Log Panel */}
+        <div className="space-y-7">
+          {/* Compact Stride Filter Bar */}
+          <div className="rounded-2xl border border-[var(--line)] bg-[var(--surface)] p-4">
+            <div className="grid gap-2.5 sm:grid-cols-2 lg:grid-cols-4">
+              <div className="relative sm:col-span-2">
+                <Search className="pointer-events-none absolute left-3 top-2.5 h-4 w-4 text-[var(--faint)]" />
+                <input
+                  type="text"
+                  placeholder="Search notes, conditions, date..."
+                  value={searchQuery}
+                  onChange={(e) => setSearchQuery(e.target.value)}
+                  className="w-full rounded-[9px] border border-[var(--line-strong)] bg-[var(--input-bg)] py-2 pl-9 pr-3 text-[13px] text-[var(--ink)] focus:border-[var(--run)] focus:outline-none"
+                />
+              </div>
 
-          <select
-            aria-label="Filter by workout type"
-            value={typeFilter}
-            onChange={(e) => setTypeFilter(e.target.value as WorkoutType | 'ALL')}
-            className="rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 focus:border-blue-600 focus:outline-none"
-          >
-            <option value="ALL">All workout types</option>
-            {Object.entries(WORKOUT_TYPE_LABELS).map(([k, label]) => (
-              <option key={k} value={k}>
-                {label}
-              </option>
-            ))}
-          </select>
-
-          <select
-            aria-label="Filter by environment"
-            value={environmentFilter}
-            onChange={(e) => setEnvironmentFilter(e.target.value as 'ALL' | 'OUTDOOR' | 'INDOOR')}
-            className="rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 focus:border-blue-600 focus:outline-none"
-          >
-            <option value="ALL">Outdoor &amp; Indoor</option>
-            <option value="OUTDOOR">Outdoor only</option>
-            <option value="INDOOR">Indoor / Treadmill</option>
-          </select>
-
-          <input
-            type="number"
-            step="0.5"
-            min="0"
-            placeholder="Min km"
-            aria-label="Minimum distance km"
-            value={minDistanceKm}
-            onChange={(e) => setMinDistanceKm(e.target.value)}
-            className="rounded-lg border border-slate-300 bg-white px-3 py-2 font-mono text-sm text-slate-900 focus:border-blue-600 focus:outline-none"
-          />
-
-          <input
-            type="number"
-            min="1"
-            max="10"
-            placeholder="Min RPE"
-            aria-label="Minimum RPE"
-            value={minRpe}
-            onChange={(e) => setMinRpe(e.target.value)}
-            className="rounded-lg border border-slate-300 bg-white px-3 py-2 font-mono text-sm text-slate-900 focus:border-blue-600 focus:outline-none"
-          />
-        </div>
-
-        <div className="mt-3 flex flex-wrap items-center justify-between gap-3 border-t border-slate-100 pt-3 text-xs text-slate-500">
-          <div className="flex flex-wrap items-center gap-3">
-            <label className="flex items-center gap-1.5">
-              <span>From</span>
-              <input
-                type="date"
-                value={dateFrom}
-                onChange={(e) => setDateFrom(e.target.value)}
-                className="rounded-md border border-slate-300 bg-white px-2 py-1 text-xs text-slate-800"
-              />
-            </label>
-            <label className="flex items-center gap-1.5">
-              <span>To</span>
-              <input
-                type="date"
-                value={dateTo}
-                onChange={(e) => setDateTo(e.target.value)}
-                className="rounded-md border border-slate-300 bg-white px-2 py-1 text-xs text-slate-800"
-              />
-            </label>
-          </div>
-
-          <div className="flex items-center gap-3">
-            <span>Select any 2 runs to compare</span>
-            {(searchQuery ||
-              typeFilter !== 'ALL' ||
-              environmentFilter !== 'ALL' ||
-              minDistanceKm ||
-              minRpe ||
-              dateFrom ||
-              dateTo) && (
-              <button
-                type="button"
-                onClick={() => {
-                  setSearchQuery('');
-                  setTypeFilter('ALL');
-                  setEnvironmentFilter('ALL');
-                  setMinDistanceKm('');
-                  setMinRpe('');
-                  setDateFrom('');
-                  setDateTo('');
-                }}
-                className="font-semibold text-blue-700 hover:underline"
+              <select
+                aria-label="Filter by workout type"
+                value={typeFilter}
+                onChange={(e) => setTypeFilter(e.target.value as WorkoutType | 'ALL')}
+                className="rounded-[9px] border border-[var(--line-strong)] bg-[var(--input-bg)] px-3 py-2 text-[12.5px] text-[var(--ink)] focus:border-[var(--run)] focus:outline-none"
               >
-                Reset filters
-              </button>
-            )}
-          </div>
-        </div>
-      </Card>
+                <option value="ALL">All types</option>
+                {Object.entries(WORKOUT_TYPE_LABELS).map(([k, label]) => (
+                  <option key={k} value={k}>
+                    {label}
+                  </option>
+                ))}
+              </select>
 
-      {loading ? (
-        <div className="rounded-xl border border-slate-200 bg-white py-12 text-center text-sm text-slate-500">
-          Loading running history...
-        </div>
-      ) : filteredSessions.length === 0 ? (
-        <EmptyState
-          icon={<Activity className="h-5 w-5" />}
-          title="No matching running sessions"
-          description={
-            sessions.length === 0
-              ? 'Log your first run manually, import a screenshot, or import your August 2026 benchmarks.'
-              : 'No runs match the active filters.'
-          }
-          action={
-            <Button onClick={() => setShowCreateModal(true)}>
-              <Plus className="h-4 w-4" />
-              <span>Log Running Session</span>
-            </Button>
-          }
-        />
-      ) : (
-        <div className="space-y-2.5">
-          {filteredSessions.map((run) => {
-            const isSelected = selectedForCompare.includes(run.id);
-            return (
-              <Card
-                key={run.id}
-                className={`p-4 transition-colors ${
-                  isSelected
-                    ? 'border-blue-500 bg-blue-50/30 ring-1 ring-blue-500'
-                    : 'hover:border-slate-300'
-                }`}
+              <select
+                aria-label="Filter by environment"
+                value={environmentFilter}
+                onChange={(e) => setEnvironmentFilter(e.target.value as 'ALL' | 'OUTDOOR' | 'INDOOR')}
+                className="rounded-[9px] border border-[var(--line-strong)] bg-[var(--input-bg)] px-3 py-2 text-[12.5px] text-[var(--ink)] focus:border-[var(--run)] focus:outline-none"
               >
-                <div className="flex flex-col justify-between gap-4 sm:flex-row sm:items-center">
-                  <div className="flex items-start gap-3">
-                    <input
-                      type="checkbox"
-                      aria-label={`Select run on ${run.session_date} for comparison`}
-                      checked={isSelected}
-                      onChange={() => toggleCompareSelection(run.id)}
-                      className="mt-1 h-4 w-4 rounded border-slate-300 text-blue-700 focus:ring-blue-600"
-                    />
-                    <div className="min-w-0">
-                      <div className="flex flex-wrap items-center gap-2">
-                        <span className="font-mono text-sm font-bold text-slate-900">
-                          {run.session_date}
-                        </span>
-                        <span className="rounded-md border border-blue-200 bg-blue-50 px-2 py-0.5 text-xs font-semibold text-blue-800">
-                          {WORKOUT_TYPE_LABELS[run.workout_type]}
-                        </span>
-                        <span className="rounded-md bg-slate-100 px-2 py-0.5 text-xs font-medium text-slate-600">
-                          {run.is_indoor ? 'Indoor' : 'Outdoor'}
-                        </span>
-                        {run.entry_method === 'SCREENSHOT' && (
-                          <span className="rounded-md border border-indigo-200 bg-indigo-50 px-2 py-0.5 text-[11px] font-medium text-indigo-800">
-                            Screenshot
-                          </span>
-                        )}
-                        {run.is_historical_record && (
-                          <span className="rounded-md border border-amber-200 bg-amber-50 px-2 py-0.5 text-[11px] font-medium text-amber-800">
-                            Historical Benchmark
-                          </span>
-                        )}
-                        <ProvenanceBadge origin={run.data_origin} />
-                      </div>
+                <option value="ALL">Outdoor &amp; Indoor</option>
+                <option value="OUTDOOR">Outdoor only</option>
+                <option value="INDOOR">Indoor / Treadmill</option>
+              </select>
+            </div>
 
-                      <div className="mt-2.5 flex flex-wrap items-baseline gap-x-5 gap-y-1 font-mono text-sm tabular-nums">
-                        <span className="font-bold text-slate-900">
-                          {formatDistanceKm(run.distance_m)}
-                        </span>
-                        <span className="text-slate-700">
-                          {formatDurationSeconds(run.duration_s)}
-                        </span>
-                        <span className="font-bold text-blue-700">
-                          {formatPace(run.distance_m, run.duration_s)}
-                        </span>
-                        {run.rpe && (
-                          <span className="rounded bg-slate-100 px-1.5 py-0.5 text-xs text-slate-600">
-                            RPE {run.rpe}/10
-                          </span>
-                        )}
-                        {run.splits && run.splits.length > 0 && (
-                          <span className="text-xs text-slate-500">
-                            {run.splits.length} split(s)
-                          </span>
-                        )}
-                      </div>
+            <div className="mt-3 flex flex-wrap items-center justify-between gap-2.5 border-t border-[var(--line)] pt-3 text-[11.5px] text-[var(--muted)]">
+              <div className="flex flex-wrap items-center gap-2">
+                <input
+                  type="number"
+                  step="0.5"
+                  min="0"
+                  placeholder="Min km"
+                  aria-label="Minimum distance km"
+                  value={minDistanceKm}
+                  onChange={(e) => setMinDistanceKm(e.target.value)}
+                  className="w-20 rounded-[7px] border border-[var(--line-strong)] bg-[var(--input-bg)] px-2 py-1 font-mono text-[11.5px] text-[var(--ink)] focus:border-[var(--run)] focus:outline-none"
+                />
+                <input
+                  type="number"
+                  min="1"
+                  max="10"
+                  placeholder="Min RPE"
+                  aria-label="Minimum RPE"
+                  value={minRpe}
+                  onChange={(e) => setMinRpe(e.target.value)}
+                  className="w-20 rounded-[7px] border border-[var(--line-strong)] bg-[var(--input-bg)] px-2 py-1 font-mono text-[11.5px] text-[var(--ink)] focus:border-[var(--run)] focus:outline-none"
+                />
+                <input
+                  type="date"
+                  aria-label="From date"
+                  value={dateFrom}
+                  onChange={(e) => setDateFrom(e.target.value)}
+                  className="rounded-[7px] border border-[var(--line-strong)] bg-[var(--input-bg)] px-2 py-1 text-[11.5px] text-[var(--ink)]"
+                />
+                <input
+                  type="date"
+                  aria-label="To date"
+                  value={dateTo}
+                  onChange={(e) => setDateTo(e.target.value)}
+                  className="rounded-[7px] border border-[var(--line-strong)] bg-[var(--input-bg)] px-2 py-1 text-[11.5px] text-[var(--ink)]"
+                />
+              </div>
 
-                      {run.notes && (
-                        <p className="mt-1.5 line-clamp-1 text-xs text-slate-600">{run.notes}</p>
-                      )}
-                    </div>
-                  </div>
+              <div className="flex items-center gap-3">
+                <span className="text-[11px] text-[var(--faint)]">Tick 2 runs to compare</span>
+                {hasActiveFilters && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setSearchQuery('');
+                      setTypeFilter('ALL');
+                      setEnvironmentFilter('ALL');
+                      setMinDistanceKm('');
+                      setMinRpe('');
+                      setDateFrom('');
+                      setDateTo('');
+                    }}
+                    className="font-semibold text-[var(--run)] hover:underline"
+                  >
+                    Reset
+                  </button>
+                )}
+              </div>
+            </div>
+          </div>
 
-                  <div className="flex items-center gap-2 self-end sm:self-center">
-                    <Link
-                      to={`/runs/${run.id}`}
-                      className="inline-flex min-h-[38px] items-center gap-1.5 rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-xs font-semibold text-slate-800 transition-colors hover:bg-slate-50"
-                    >
-                      <span>Analyze</span>
-                      <ArrowRight className="h-3.5 w-3.5" />
-                    </Link>
-                    <button
-                      type="button"
-                      onClick={() => void handleDelete(run.id)}
-                      aria-label={`Delete run on ${run.session_date}`}
-                      className="flex h-[38px] w-[38px] items-center justify-center rounded-lg border border-slate-200 bg-white text-slate-500 transition-colors hover:border-red-200 hover:bg-red-50 hover:text-red-600"
-                    >
-                      <Trash2 className="h-4 w-4" />
-                    </button>
-                  </div>
+          {/* Run List Panel */}
+          <section className="rounded-2xl border border-[var(--line)] bg-[var(--surface)] px-5 py-4">
+            <div className="mb-4 flex items-end justify-between gap-3">
+              <div>
+                <div className="text-[11px] font-bold tracking-[0.12em] text-[var(--muted)]">
+                  YOUR HISTORY
                 </div>
-              </Card>
-            );
-          })}
+                <h2 className="mt-1.5 text-[23px] font-bold tracking-[-0.04em] text-[var(--ink)]">
+                  Run log
+                </h2>
+              </div>
+              <span className="rounded-[6px] border border-[var(--line)] bg-[var(--surface-2)] px-2.5 py-1 font-mono text-[10.5px] font-semibold text-[var(--muted)]">
+                {sessions.length} recorded
+              </span>
+            </div>
+
+            {loading ? (
+              <div className="border-t border-[var(--line)] py-8 text-center text-sm text-[var(--muted)]">
+                Loading running history...
+              </div>
+            ) : filteredSessions.length === 0 ? (
+              <div className="flex flex-col items-center border-t border-[var(--line)] px-4 py-8 text-center">
+                {/* Stride Concentric Track Rings Graphic */}
+                <div className="relative mb-3 h-[126px] w-[166px]" aria-hidden="true">
+                  <span className="absolute left-3.5 top-2.5 block h-[102px] w-[136px] -rotate-[18deg] rounded-[100px] border-[8px] border-[var(--run)]/30" />
+                  <span className="absolute left-8 top-7 block h-[66px] w-[100px] -rotate-[18deg] rounded-[100px] border-[7px] border-[var(--run)]/55" />
+                  <span className="absolute left-[52px] top-[44px] block h-[32px] w-[58px] -rotate-[18deg] rounded-[100px] border-[6px] border-[var(--run)]" />
+                  <i className="absolute right-3 top-4 block h-5 w-5 rounded-full bg-[var(--yellow)]" />
+                </div>
+                <h3 className="text-[21px] font-bold tracking-[-0.04em] text-[var(--ink)]">
+                  {sessions.length === 0
+                    ? 'Every runner starts somewhere.'
+                    : 'No matching runs.'}
+                </h3>
+                <p className="mt-2.5 max-w-[350px] text-[12.5px] leading-relaxed text-[var(--muted)]">
+                  {sessions.length === 0
+                    ? 'No recorded runs yet. Add your first real session to start building an honest picture of your progress.'
+                    : 'Try adjusting or resetting your active filters.'}
+                </p>
+                <div className="mt-5">
+                  <button
+                    type="button"
+                    onClick={() => setShowCreateModal(true)}
+                    className="inline-flex h-10 items-center justify-center gap-2 rounded-[9px] bg-[var(--run)] px-4 text-[13px] font-bold text-[var(--run-btn-text)] transition-opacity hover:opacity-90 active:translate-y-px"
+                  >
+                    <Plus className="h-4 w-4 stroke-[2.5]" />
+                    <span>Record your first run</span>
+                  </button>
+                </div>
+              </div>
+            ) : (
+              <div className="divide-y divide-[var(--line)] border-t border-[var(--line)]">
+                {filteredSessions.map((run) => {
+                  const isSelected = selectedForCompare.includes(run.id);
+                  return (
+                    <div
+                      key={run.id}
+                      className={`flex flex-wrap items-center justify-between gap-3 py-4 transition-colors ${
+                        isSelected ? 'bg-[var(--run-lite)]/40 -mx-3 px-3 rounded-xl' : ''
+                      }`}
+                    >
+                      <div className="flex min-w-0 flex-1 items-center gap-3.5">
+                        <input
+                          type="checkbox"
+                          aria-label={`Select run on ${run.session_date} for comparison`}
+                          checked={isSelected}
+                          onChange={() => toggleCompareSelection(run.id)}
+                          className="h-4 w-4 shrink-0 rounded border-[var(--line-strong)] accent-[var(--run)]"
+                        />
+                        <CategoryMark category="RUNNING" />
+                        <div className="min-w-0 flex-1">
+                          <div className="flex flex-wrap items-center gap-2">
+                            <Link
+                              to={`/runs/${run.id}`}
+                              className="text-[13.5px] font-bold text-[var(--ink)] hover:text-[var(--run)]"
+                            >
+                              {WORKOUT_TYPE_LABELS[run.workout_type]}
+                            </Link>
+                            <span className="font-mono text-[11.5px] text-[var(--muted)]">
+                              {run.session_date}
+                            </span>
+                            {run.is_indoor && (
+                              <span className="rounded bg-[var(--surface-2)] px-1.5 py-0.5 text-[10px] font-semibold text-[var(--muted)]">
+                                Indoor
+                              </span>
+                            )}
+                            {run.is_historical_record && (
+                              <span className="rounded bg-[var(--surface-2)] px-1.5 py-0.5 text-[10px] font-semibold text-[var(--muted)]">
+                                Historical
+                              </span>
+                            )}
+                            <ProvenanceBadge origin={run.data_origin} />
+                          </div>
+                          <div className="mt-1 flex flex-wrap items-center gap-2 text-[11.5px] text-[var(--muted)]">
+                            <span className="font-mono">{formatDurationSeconds(run.duration_s)}</span>
+                            {run.rpe && <span>· RPE {run.rpe}/10</span>}
+                            {run.splits && run.splits.length > 0 && (
+                              <span>· {run.splits.length} splits</span>
+                            )}
+                            {run.notes && (
+                              <span className="truncate max-w-[260px]">· {run.notes}</span>
+                            )}
+                          </div>
+                        </div>
+                      </div>
+
+                      <div className="flex items-center gap-3">
+                        <div className="text-right font-mono tabular-nums">
+                          <div className="text-[13.5px] font-bold text-[var(--ink)]">
+                            {formatDistanceKm(run.distance_m)}
+                          </div>
+                          <div className="text-[11px] font-medium text-[var(--run)]">
+                            {formatPace(run.distance_m, run.duration_s)}
+                          </div>
+                        </div>
+
+                        <Link
+                          to={`/runs/${run.id}`}
+                          aria-label={`Analyze run on ${run.session_date}`}
+                          className="flex h-8 w-8 items-center justify-center rounded-lg text-[var(--muted)] transition-colors hover:bg-[var(--surface-2)] hover:text-[var(--ink)]"
+                        >
+                          <ChevronRight className="h-4 w-4" />
+                        </Link>
+                        <button
+                          type="button"
+                          onClick={() => void handleDelete(run.id)}
+                          aria-label={`Delete run on ${run.session_date}`}
+                          className="flex h-8 w-8 items-center justify-center rounded-lg text-[var(--faint)] transition-colors hover:bg-red-500/10 hover:text-red-600 dark:hover:text-red-400"
+                        >
+                          <Trash2 className="h-3.5 w-3.5" />
+                        </button>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </section>
         </div>
-      )}
+
+        {/* Right Sidebar: North Star + Honesty Card + Historical Import */}
+        <aside className="flex flex-col gap-4">
+          <div className="rounded-2xl border border-[var(--line)] bg-[var(--run-lite)] p-5">
+            <div className="text-[11px] font-bold tracking-[0.12em] text-[var(--muted)]">
+              YOUR NORTH STAR
+            </div>
+            <h2 className="mt-1.5 text-[21px] font-bold tracking-[-0.045em] text-[var(--ink)]">
+              5K under 20:00
+            </h2>
+            <p className="mt-2 text-[12.5px] leading-relaxed text-[var(--muted)]">
+              Your first big milestone. The next chapter is 17:30.
+            </p>
+
+            <div className="mt-5 divide-y divide-[var(--line-strong)] border-t border-[var(--line-strong)]">
+              <div className="flex items-center justify-between py-3 text-[12px]">
+                <span className="text-[var(--muted)]">First target</span>
+                <b className="font-mono text-[var(--ink)]">19:59</b>
+              </div>
+              <div className="flex items-center justify-between py-3 text-[12px]">
+                <span className="text-[var(--muted)]">Long-term target</span>
+                <b className="font-mono text-[var(--ink)]">17:30</b>
+              </div>
+              <div className="flex items-center justify-between pt-3 text-[12px]">
+                <span className="text-[var(--muted)]">Personal bests</span>
+                <Link
+                  to="/personal-bests"
+                  className="inline-flex items-center gap-1 font-semibold text-[var(--run-ink)] hover:underline"
+                >
+                  <span>View PBs</span>
+                  <ArrowRight className="h-3.5 w-3.5" />
+                </Link>
+              </div>
+            </div>
+          </div>
+
+          <div className="flex items-start gap-3 rounded-xl border border-[var(--line)] bg-[var(--surface)] p-5">
+            <Info className="mt-0.5 h-4 w-4 shrink-0 text-[var(--muted)]" />
+            <p className="text-[12px] leading-relaxed text-[var(--muted)]">
+              <b className="text-[var(--ink)]">Real data only.</b> Planned runs, estimates, and
+              recorded performances stay clearly separate.
+            </p>
+          </div>
+
+          {!loading && !hasHistoricalAug2026 && (
+            <div className="rounded-xl border border-[var(--line)] bg-[var(--surface)] p-5">
+              <div className="text-[12px] font-bold text-[var(--ink)]">
+                Import August 2026 Benchmarks
+              </div>
+              <p className="mt-1.5 text-[11.5px] leading-relaxed text-[var(--muted)]">
+                Add your two documented historical runs (Aug 13: 5.00 km in 28:10 · Aug 18: 5.14 km
+                in 30:58) without inventing splits.
+              </p>
+              <Button
+                variant="secondary"
+                disabled={importingHistory}
+                onClick={() => void handleImportAugust2026()}
+                className="mt-3.5 w-full !min-h-[36px] !text-[12px]"
+              >
+                <History className="h-3.5 w-3.5" />
+                <span>{importingHistory ? 'Importing...' : 'Import Aug 2026 Records'}</span>
+              </Button>
+            </div>
+          )}
+        </aside>
+      </div>
 
       {showCreateModal && user && (
         <RunFormModal

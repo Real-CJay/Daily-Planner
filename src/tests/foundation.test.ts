@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+﻿import { describe, expect, it } from 'vitest';
 import { formatDurationSeconds, getMondayWeekStart } from '@/lib/datetime';
 import { NAV_ITEMS } from '@/components/layout/AppShell';
 
@@ -15,12 +15,14 @@ describe('Stage 1 Foundation Utilities', () => {
     expect(formatDurationSeconds(3930)).toBe('1:05:30');
   });
 
-  it('exposes all 9 required top-level navigation routes', () => {
-    expect(NAV_ITEMS).toHaveLength(9);
+  it('exposes all 11 required top-level navigation routes', () => {
+    expect(NAV_ITEMS).toHaveLength(11);
     const paths = NAV_ITEMS.map((i) => i.to);
     expect(paths).toEqual([
       '/',
       '/runs',
+      '/karate',
+      '/music',
       '/plan',
       '/calendar',
       '/analytics',

@@ -3,165 +3,251 @@
 @tailwind utilities;
 
 :root {
-  --bg-canvas: #ffffff;
-  --bg-surface: #ffffff;
-  --bg-subtle: #f7f9f8;
-  --border-hairline: #e5eae7;
-  --text-primary: #161c19;
-  --text-secondary: #525c57;
-  --text-muted: #747c84;
-  --accent-primary: #176d3e;
-  --accent-bright: #2ccc74;
-  --accent-warm: #f4dca4;
+  color-scheme: light;
+  /* Stride neutral surfaces */
+  --bg: #fafaf8;
+  --surface: #ffffff;
+  --surface-2: #f5f5f2;
+  --surface-3: #efefec;
+  --ink: #191c22;
+  --muted: #737781;
+  --faint: #989ba2;
+  --line: #e7e7e3;
+  --line-strong: #d9dad6;
+  --icon-bg: #f3f4f2;
+  --input-bg: #ffffff;
+  --yellow: #f4cf72;
+  --shadow: 0 16px 48px rgba(10, 20, 30, 0.035);
+
+  /* Core & More pages: default Stride Blue */
+  --blue: #315bdf;
+  --blue-lite: #ecf0ff;
+  --blue-ink: #2948b2;
+  --blue-btn-text: #ffffff;
+  --art-blue: #4766da;
+  --primary-button: #202226;
+  --button-text: #ffffff;
+
+  /* Running accent: Calm Sage-Teal */
+  --run: #2f6f68;
+  --run-lite: #e8f3f1;
+  --run-ink: #22534d;
+  --run-btn-text: #ffffff;
+
+  /* Karate accent (from stride-studio.html) */
+  --karate: #ab5946;
+  --karate-lite: #f7ece8;
+  --karate-ink: #844132;
+  --karate-btn-text: #ffffff;
+
+  /* Music accents per instrument (from stride-studio.html) */
+  --music: #9d527f;
+  --music-lite: #f6ebf2;
+  --music-ink: #763a5e;
+  --music-btn-text: #ffffff;
+
+  --music-vocal: #9d527f;
+  --music-vocal-fg: #ffffff;
+  --music-drumming: #a46a28;
+  --music-drumming-fg: #ffffff;
+  --music-guitar: #89631e;
+  --music-guitar-fg: #ffffff;
+  --music-keyboard: #167587;
+  --music-keyboard-fg: #ffffff;
+
+  /* Backward-compatible semantic aliases */
+  --bg-app: var(--bg);
+  --bg-canvas: var(--bg);
+  --bg-surface: var(--surface);
+  --bg-subtle: var(--surface-2);
+  --border-subtle: var(--line);
+  --border-hairline: var(--line);
+  --text-primary: var(--ink);
+  --text-secondary: var(--muted);
+  --text-muted: var(--faint);
+  --accent-primary: var(--blue);
+  --accent-bright: var(--blue);
+  --accent-warm: var(--yellow);
 }
 
+:root[data-theme="dark"],
 html.dark {
-  --bg-canvas: #191a23;
-  --bg-surface: #21222d;
-  --bg-subtle: #282a38;
-  --border-hairline: #323546;
-  --text-primary: #ffffff;
-  --text-secondary: #cbcccc;
-  --text-muted: #858b99;
-  --accent-primary: #c84a59;
-  --accent-bright: #ff8295;
-  --accent-warm: #f3c26a;
-  --morgen-slate: #76879d;
-  --morgen-slate-hover: #3a4554;
+  color-scheme: dark;
+  /* Stride neutral graphite surfaces */
+  --bg: #121315;
+  --surface: #1c1e22;
+  --surface-2: #24262b;
+  --surface-3: #2c2f34;
+  --ink: #f3f3ef;
+  --muted: #a1a3ab;
+  --faint: #878a92;
+  --line: #32353a;
+  --line-strong: #45494f;
+  --icon-bg: #282b2f;
+  --input-bg: #222429;
+  --yellow: #e9bd60;
+  --shadow: none;
+
+  /* Core & More pages: default Stride Blue */
+  --blue: #9aaeff;
+  --blue-lite: #2a3044;
+  --blue-ink: #c0ccff;
+  --blue-btn-text: #101726;
+  --art-blue: #8096f5;
+  --primary-button: #f2f2ed;
+  --button-text: #191c22;
+
+  /* Running accent: Calm Sage-Teal */
+  --run: #6ca89f;
+  --run-lite: #1c2927;
+  --run-ink: #b6dcd6;
+  --run-btn-text: #111514;
+
+  /* Karate accent (from stride-studio.html) */
+  --karate: #e8a18c;
+  --karate-lite: #2e211d;
+  --karate-ink: #f1c3b4;
+  --karate-btn-text: #281711;
+
+  /* Music accents per instrument (from stride-studio.html) */
+  --music: #dca0c5;
+  --music-lite: #2b2028;
+  --music-ink: #ecc7de;
+  --music-btn-text: #281626;
+
+  --music-vocal: #dca0c5;
+  --music-vocal-fg: #281626;
+  --music-drumming: #eab16d;
+  --music-drumming-fg: #2c1d0d;
+  --music-guitar: #e1c17d;
+  --music-guitar-fg: #261c0d;
+  --music-keyboard: #86cdda;
+  --music-keyboard-fg: #0e2830;
+
+  --bg-app: var(--bg);
+  --bg-canvas: var(--bg);
+  --bg-surface: var(--surface);
+  --bg-subtle: var(--surface-2);
+  --border-subtle: var(--line);
+  --border-hairline: var(--line);
+  --text-primary: var(--ink);
+  --text-secondary: var(--muted);
+  --text-muted: var(--faint);
+  --accent-primary: var(--blue);
+  --accent-bright: var(--blue);
+  --accent-warm: var(--yellow);
 }
 
 @layer base {
   html {
-    font-family: 'Inter', ui-sans-serif, system-ui, -apple-system, sans-serif;
-    color-scheme: light;
-  }
-
-  html.dark {
-    color-scheme: dark;
+    font-family: Inter, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Arial, sans-serif;
+    -webkit-font-smoothing: antialiased;
   }
 
   body {
-    background-color: var(--bg-canvas);
-    color: var(--text-primary);
+    background-color: var(--bg);
+    color: var(--ink);
+  }
+
+  ::selection {
+    background: #ccd6ff;
+    color: #171c2c;
   }
 }
 
-/* Light-mode Flomo calm accent harmonization */
-html:not(.dark) :where(.text-blue-700, .text-blue-800) {
-  color: #176d3e;
+/* Stride v3 restrained activity color-mix system */
+.stride-cat-mark {
+  color: var(--cat-color);
+  background: color-mix(in srgb, var(--cat-color) 12%, var(--surface));
+  border: 1px solid color-mix(in srgb, var(--cat-color) 16%, var(--line));
 }
-html:not(.dark) :where(.bg-blue-700) {
-  background-color: #176d3e;
-}
-html:not(.dark) :where(.border-blue-600, .border-blue-700) {
-  border-color: #176d3e;
-}
-html:not(.dark) :where(.ring-blue-600) {
-  --tw-ring-color: #2ccc74;
-}
-html:not(.dark) :where(.bg-slate-50) {
-  background-color: #f7f9f8;
-}
-html:not(.dark) :where(.border-slate-200) {
-  border-color: #e5eae7;
-}
-html:not(.dark) :where(.text-slate-500, .text-slate-600) {
-  color: #747c84;
+:root[data-theme="dark"] .stride-cat-mark,
+html.dark .stride-cat-mark {
+  color: color-mix(in srgb, var(--cat-color) 75%, #ffffff);
+  background: color-mix(in srgb, var(--cat-color) 21%, var(--surface));
+  border-color: color-mix(in srgb, var(--cat-color) 24%, var(--line));
 }
 
-/* Dark-mode Morgen surface, border & accent harmonization (explicit dark:* always wins) */
-.dark :where(.bg-white) {
-  background-color: #21222d;
+.stride-cat-label {
+  color: var(--cat-color);
 }
-.dark :where(.bg-slate-50) {
-  background-color: #1d1e28;
-}
-.dark :where(.bg-slate-50\/70, .bg-slate-50\/60) {
-  background-color: rgba(33, 34, 45, 0.78);
-}
-.dark :where(.bg-slate-100) {
-  background-color: #282a38;
+:root[data-theme="dark"] .stride-cat-label,
+html.dark .stride-cat-label {
+  color: color-mix(in srgb, var(--cat-color) 74%, #ffffff);
 }
 
-.dark :where(.text-slate-900) {
+.stride-cal-event {
+  background: color-mix(in srgb, var(--cat-color) 11%, var(--surface));
+  border: 1px solid color-mix(in srgb, var(--cat-color) 23%, var(--line));
+  border-left: 3px solid var(--cat-color);
+  color: var(--ink);
+}
+.stride-cal-event:hover {
+  background: color-mix(in srgb, var(--cat-color) 18%, var(--surface));
+  border-color: color-mix(in srgb, var(--cat-color) 44%, var(--line));
+}
+:root[data-theme="dark"] .stride-cal-event,
+html.dark .stride-cal-event {
+  background: color-mix(in srgb, var(--cat-color) 16%, var(--surface));
+  border-color: color-mix(in srgb, var(--cat-color) 28%, var(--line));
+}
+
+.stride-split-cell {
+  background: var(--surface);
+  color: var(--muted);
+  border: 1px solid var(--line);
+  transition: background 0.16s ease, border-color 0.16s ease, color 0.16s ease;
+}
+.stride-split-cell:hover {
+  background: color-mix(in srgb, var(--split-color) 7%, var(--surface));
+  border-color: color-mix(in srgb, var(--split-color) 30%, var(--line));
+  color: var(--ink);
+}
+.stride-split-cell.selected {
+  background: color-mix(in srgb, var(--split-color) 10%, var(--surface));
+  border-color: color-mix(in srgb, var(--split-color) 65%, var(--line));
+  color: var(--ink);
+}
+.stride-split-index {
+  background: color-mix(in srgb, var(--split-color) 12%, var(--surface));
+  color: var(--split-color);
+}
+:root[data-theme="dark"] .stride-split-index,
+html.dark .stride-split-index {
+  color: color-mix(in srgb, var(--split-color) 74%, #ffffff);
+  background: color-mix(in srgb, var(--split-color) 22%, var(--surface));
+}
+.stride-split-cell.selected .stride-split-index {
+  background: var(--split-color);
   color: #ffffff;
 }
-.dark :where(.text-slate-800) {
-  color: #e6e7eb;
-}
-.dark :where(.text-slate-700) {
-  color: #cbcccc;
-}
-.dark :where(.text-slate-600, .text-slate-500) {
-  color: #8f96a6;
-}
-.dark :where(.text-blue-700, .text-blue-800) {
-  color: #ff8295;
-}
-.dark :where(.bg-blue-700) {
-  background-color: #c84a59;
-}
-.dark :where(.border-blue-600, .border-blue-700) {
-  border-color: #c84a59;
-}
-.dark :where(.ring-blue-600) {
-  --tw-ring-color: #ff8295;
-}
-.dark :where(.text-emerald-700, .text-emerald-800, .text-emerald-900) {
-  color: #5eead4;
-}
-.dark :where(.text-amber-700, .text-amber-800) {
-  color: #f3c26a;
-}
-.dark :where(.text-red-700, .text-red-800) {
-  color: #ff8295;
-}
 
-.dark :where(.border-slate-100, .border-slate-200) {
-  border-color: #323546;
+.stride-sun-orbit {
+  position: relative;
+  width: 104px;
+  height: 104px;
+  border: 1.5px dashed var(--line-strong);
+  border-radius: 50%;
+  display: grid;
+  place-items: center;
 }
-.dark :where(.border-slate-300) {
-  border-color: #44475a;
-}
-.dark :where(.divide-slate-100 > :not([hidden]) ~ :not([hidden]), .divide-slate-200 > :not([hidden]) ~ :not([hidden])) {
-  border-color: #323546;
-}
-
-/* Semantic callout tints tuned for Morgen obsidian */
-.dark :where(.bg-blue-50, .bg-blue-50\/60, .bg-blue-50\/50) {
-  background-color: rgba(60, 28, 38, 0.55);
-}
-.dark :where(.border-blue-200) {
-  border-color: rgba(255, 130, 149, 0.32);
-}
-.dark :where(.bg-emerald-50, .bg-emerald-50\/70) {
-  background-color: rgba(20, 83, 65, 0.3);
-}
-.dark :where(.border-emerald-200) {
-  border-color: rgba(44, 204, 116, 0.32);
-}
-.dark :where(.bg-amber-50, .bg-amber-50\/70, .bg-amber-50\/60) {
-  background-color: rgba(165, 136, 84, 0.22);
-}
-.dark :where(.border-amber-200, .border-amber-300) {
-  border-color: rgba(243, 194, 106, 0.36);
-}
-.dark :where(.bg-red-50, .bg-red-50\/60) {
-  background-color: rgba(60, 28, 38, 0.72);
-}
-.dark :where(.border-red-200, .border-red-300) {
-  border-color: rgba(200, 74, 89, 0.45);
+.stride-sun-circle {
+  background: var(--yellow);
+  width: 60px;
+  height: 60px;
+  border-radius: 50%;
+  box-shadow: 0 0 0 11px rgba(242, 207, 113, 0.14);
 }
 
 /* Recharts dark-mode legibility */
 .dark .recharts-cartesian-axis-tick-value {
-  fill: #8f96a6;
+  fill: var(--muted);
 }
 .dark .recharts-cartesian-grid line {
-  stroke: #323546;
+  stroke: var(--line);
 }
 .dark .recharts-default-tooltip {
-  background-color: #21222d !important;
-  border-color: #44475a !important;
-  color: #ffffff !important;
+  background-color: var(--surface) !important;
+  border-color: var(--line-strong) !important;
+  color: var(--ink) !important;
 }

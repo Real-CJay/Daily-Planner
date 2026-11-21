@@ -1,5 +1,6 @@
-﻿import { useState } from 'react';
+﻿import { useState, type CSSProperties } from 'react';
 import { RotateCcw, X } from 'lucide-react';
+import { SPLIT_COLORS } from '@/design-system';
 import {
   STRENGTH_FOCUS_LABELS,
   STRENGTH_FOCUS_LOAD,
@@ -57,13 +58,13 @@ export function StrengthFocusPopover({
   }
 
   return (
-    <div className="mt-2 rounded-xl border border-[#E5EAE7] bg-[#F7F9F8] p-3.5 shadow-sm dark:border-morgen-border dark:bg-morgen-elevated">
+    <div className="mt-2 rounded-xl border border-[var(--line)] bg-[var(--surface-2)]/70 p-3.5">
       <div className="flex items-center justify-between gap-2">
         <div>
-          <div className="text-xs font-semibold text-[#161C19] dark:text-white">
+          <div className="text-[12px] font-bold text-[var(--ink)]">
             What did your Home Workout app assign today?
           </div>
-          <div className="text-[11px] text-flomo-slate dark:text-morgen-muted">
+          <div className="text-[11px] text-[var(--muted)]">
             Lower Body &amp; Full Body automatically flag leg fatigue for running protection.
           </div>
         </div>
@@ -71,7 +72,7 @@ export function StrengthFocusPopover({
           type="button"
           onClick={onClose}
           aria-label="Close workout focus picker"
-          className="rounded-md p-1 text-flomo-slate hover:bg-white hover:text-[#161C19] dark:text-morgen-muted dark:hover:bg-morgen-surface dark:hover:text-white"
+          className="rounded-md p-1 text-[var(--muted)] transition-colors hover:bg-[var(--surface)] hover:text-[var(--ink)]"
         >
           <X className="h-4 w-4" />
         </button>
@@ -79,18 +80,16 @@ export function StrengthFocusPopover({
 
       {/* Duration presets */}
       <div className="mt-3 flex flex-wrap items-center gap-1.5">
-        <span className="mr-1 font-mono text-[11px] text-flomo-slate dark:text-morgen-muted">
-          Duration:
-        </span>
+        <span className="mr-1 font-mono text-[11px] text-[var(--muted)]">Duration:</span>
         {DURATION_PRESETS.map((mins) => (
           <button
             key={mins}
             type="button"
             onClick={() => setDurationMin(mins)}
-            className={`rounded-md border px-2 py-0.5 font-mono text-[11px] font-medium transition-colors ${
+            className={`rounded-[6px] border px-2 py-0.5 font-mono text-[11px] font-semibold transition-colors ${
               durationMin === mins
-                ? 'border-[#176D3E] bg-[#176D3E] text-white dark:border-morgen-rose dark:bg-morgen-rose'
-                : 'border-[#E5EAE7] bg-white text-[#525C57] hover:border-[#2CCC74] dark:border-morgen-border dark:bg-morgen-surface dark:text-morgen-body'
+                ? 'border-[var(--blue)] bg-[var(--blue)] text-white dark:text-[#121315]'
+                : 'border-[var(--line-strong)] bg-[var(--surface)] text-[var(--muted)] hover:text-[var(--ink)]'
             }`}
           >
             {mins}m
@@ -111,20 +110,19 @@ export function StrengthFocusPopover({
               type="button"
               disabled={saving}
               onClick={() => void handleSelectFocus(focus)}
-              className={`flex flex-col items-start rounded-lg border px-3 py-2 text-left transition-colors ${
-                isSelected
-                  ? 'border-[#176D3E] bg-[#2CCC74]/15 dark:border-morgen-red dark:bg-morgen-wine/80'
-                  : 'border-[#E5EAE7] bg-white hover:border-[#176D3E]/50 dark:border-morgen-border dark:bg-morgen-surface dark:hover:border-morgen-red/50'
+              style={{ '--split-color': SPLIT_COLORS[focus] } as CSSProperties}
+              className={`stride-split-cell flex flex-col items-start rounded-lg px-3 py-2 text-left ${
+                isSelected ? 'selected' : ''
               }`}
             >
-              <span className="text-xs font-semibold text-[#161C19] dark:text-white">
+              <span className="text-[12px] font-bold text-[var(--ink)]">
                 {STRENGTH_FOCUS_LABELS[focus]}
               </span>
               <span
                 className={`mt-0.5 font-mono text-[10px] ${
                   isHigh
-                    ? 'text-[#A06214] dark:text-morgen-yellow'
-                    : 'text-flomo-slate dark:text-morgen-muted'
+                    ? 'font-semibold text-amber-700 dark:text-amber-300'
+                    : 'text-[var(--muted)]'
                 }`}
               >
                 {focus === 'APP_REST'
@@ -141,7 +139,7 @@ export function StrengthFocusPopover({
       </div>
 
       {existingCompletion && onClear && (
-        <div className="mt-3 flex justify-end border-t border-[#E5EAE7] pt-2.5 dark:border-morgen-border">
+        <div className="mt-3 flex justify-end border-t border-[var(--line)] pt-2.5">
           <button
             type="button"
             disabled={saving}
@@ -149,7 +147,7 @@ export function StrengthFocusPopover({
               await onClear();
               onClose();
             }}
-            className="inline-flex items-center gap-1.5 text-xs font-medium text-flomo-slate hover:text-[#161C19] dark:text-morgen-muted dark:hover:text-white"
+            className="inline-flex items-center gap-1.5 text-xs font-semibold text-[var(--muted)] transition-colors hover:text-[var(--ink)]"
           >
             <RotateCcw className="h-3.5 w-3.5" />
             Undo check-off

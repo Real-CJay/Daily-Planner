@@ -47,6 +47,7 @@ export function ThemeProvider({ children }: { children: ReactNode }) {
 
   useEffect(() => {
     const root = document.documentElement;
+    root.dataset.theme = resolvedTheme;
     if (resolvedTheme === 'dark') {
       root.classList.add('dark');
     } else {

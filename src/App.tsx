@@ -5,6 +5,8 @@ import { AuthPage } from '@/modules/auth/AuthPage';
 import { AppShell } from '@/components/layout/AppShell';
 import { OverviewPage } from '@/pages/OverviewPage';
 import { RunningLogPage } from '@/pages/RunningLogPage';
+import { KaratePage } from '@/pages/KaratePage';
+import { MusicPage } from '@/pages/MusicPage';
 import { RunDetailPage } from '@/pages/RunDetailPage';
 import { CalendarPage } from '@/pages/CalendarPage';
 import { AnalyticsPage } from '@/pages/AnalyticsPage';
@@ -35,6 +37,8 @@ function AuthenticatedWorkspace() {
         <Route path="/" element={<OverviewPage />} />
         <Route path="/runs" element={<RunningLogPage />} />
         <Route path="/runs/:id" element={<RunDetailPage />} />
+        <Route path="/karate" element={<KaratePage />} />
+        <Route path="/music" element={<MusicPage />} />
         <Route path="/calendar" element={<CalendarPage />} />
         <Route path="/analytics" element={<AnalyticsPage />} />
         <Route path="/personal-bests" element={<PersonalBestsPage />} />
