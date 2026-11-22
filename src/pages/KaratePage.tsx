@@ -397,9 +397,7 @@ export function KaratePage() {
           <h2 className="text-[19px] font-bold tracking-[-0.04em] text-[var(--ink)]">
             Practice notes
           </h2>
-          <p className="mt-1 text-[12px] text-[var(--muted)]">
-            A little context for your week.
-          </p>
+          
 
           {stats.topKatas.length > 0 ? (
             <div className="mt-5">

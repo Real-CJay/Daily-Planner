@@ -176,9 +176,7 @@ export function ReadingPage() {
           <h2 className="text-[21px] font-bold tracking-[-0.04em] text-[var(--ink)]">
             Today&apos;s reading session
           </h2>
-          <p className="mt-1 text-[12px] text-[var(--muted)]">
-            Track the book, pages read, and rough time with the built-in timer.
-          </p>
+          
 
           <div className="mt-5 grid gap-3 sm:grid-cols-[1.4fr_1fr]">
             <label className="block text-[11.5px] font-semibold text-[var(--muted)]">

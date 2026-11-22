@@ -13,43 +13,62 @@ describe('Monk Mode Compounding Engine', () => {
     category: 'VOCAL',
     tier: 'NON_NEGOTIABLE',
     targetMinutes: 30,
-    createdAt: '2026-11-20',
+    createdAt: '2026-11-16',
   };
 
-  it('locks non-negotiables while Monk Mode is active', () => {
+  const drums: PlannerCommitment = {
+    id: 'c-drums',
+    title: 'Drums 3x/wk',
+    category: 'DRUMMING',
+    tier: 'NEGOTIABLE',
+    targetMinutes: 45,
+    targetPerWeek: 3,
+    intendedDays: [1, 3, 5], // Intended Mon, Wed, Fri
+    createdAt: '2026-11-16',
+  };
+
+  it('locks both non-negotiables and chosen negotiables while Monk Mode is active', () => {
     const session = createMonkModeSession({
       title: '14-Day Monk Mode',
-      startDate: '2026-11-20',
+      startDate: '2026-11-16',
       plannedDays: 14,
       nonNegotiables: [vocal],
+      negotiables: [drums],
     });
     expect(isCommitmentLocked(vocal, session)).toBe(true);
-    expect(isCommitmentLocked(vocal, null)).toBe(false);
+    expect(isCommitmentLocked(drums, session)).toBe(true);
+    expect(isCommitmentLocked(drums, null)).toBe(false);
   });
 
-  it('compounds score by 1.01 on compliant days and decays by 0.99 on broken days', () => {
+  it('passes flexible weekly negotiables when intended days are skipped but weekly count is met', () => {
+    // Full Mon-Sun week: 2026-11-16 (Mon) to 2026-11-22 (Sun)
     const session = createMonkModeSession({
-      title: '3-Day Sprint',
-      startDate: '2026-11-20',
-      plannedDays: 3,
+      title: '7-Day Monk Mode',
+      startDate: '2026-11-16',
+      plannedDays: 7,
       nonNegotiables: [vocal],
+      negotiables: [drums],
     });
 
-    const report = evaluateMonkModeReport(
-      session,
-      {
-        '2026-11-20': ['c-vocal'], // 1.01
-        '2026-11-21': [], // 1.01 * 0.99 = 0.9999
-        '2026-11-22': ['c-vocal'], // 0.9999 * 1.01 = 1.0099
-      },
-      '2026-11-22'
-    );
+    // User skipped Mon/Wed/Fri for drums, did Tue/Thu/Sun instead -> still 3/3 PASS!
+    const completions: Record<string, string[]> = {
+      '2026-11-16': ['c-vocal'],
+      '2026-11-17': ['c-vocal', 'c-drums'],
+      '2026-11-18': ['c-vocal'],
+      '2026-11-19': ['c-vocal', 'c-drums'],
+      '2026-11-20': ['c-vocal'],
+      '2026-11-21': ['c-vocal'],
+      '2026-11-22': ['c-vocal', 'c-drums'],
+    };
 
-    expect(report.compliantDays).toBe(2);
-    expect(report.brokenDays).toBe(1);
-    expect(report.rawScore).toBeCloseTo(1.0099, 3);
-    expect(report.earlyExitPenalty).toBe(0);
-    expect(report.finalScore).toBeCloseTo(1.0099, 3);
+    const report = evaluateMonkModeReport(session, completions, '2026-11-22');
+
+    expect(report.compliantDays).toBe(7);
+    expect(report.brokenDays).toBe(0);
+    expect(report.weeklyQuotasPassed).toBe(1);
+    expect(report.weeklyQuotasMissed).toBe(0);
+    expect(report.compliancePct).toBe(100);
+    expect(report.finalScore).toBeGreaterThan(1.08);
   });
 
   it('applies a proportional penalty and records the reason when ended early', () => {
@@ -61,7 +80,7 @@ describe('Monk Mode Compounding Engine', () => {
         nonNegotiables: [vocal],
       }),
       status: 'ENDED_EARLY' as const,
-      endedAtDate: '2026-11-21', // 2 days elapsed, 8 days remaining
+      endedAtDate: '2026-11-21',
       earlyExitReason: 'Travel and exam week',
     };
 

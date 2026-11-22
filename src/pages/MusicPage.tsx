@@ -328,9 +328,7 @@ export function MusicPage() {
             <h2 className="text-[21px] font-bold tracking-[-0.04em] text-[var(--ink)]">
               Today&apos;s {activeConfig.label.toLowerCase()} session
             </h2>
-            <p className="mt-1 text-[12px] text-[var(--muted)]">
-              Set your duration and record what you practiced.
-            </p>
+            
           </div>
 
           <div className="mt-6 text-[10px] font-bold uppercase tracking-[0.13em] text-[var(--faint)]">
@@ -456,9 +454,7 @@ export function MusicPage() {
             <h2 className="text-[21px] font-bold tracking-[-0.04em] text-[var(--ink)]">
               This week
             </h2>
-            <p className="mt-1 text-[12px] text-[var(--muted)]">
-              Actual practice, not planned time.
-            </p>
+            
           </div>
 
           <div className="mt-4 flex flex-wrap items-baseline gap-3">

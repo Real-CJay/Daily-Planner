@@ -4,7 +4,6 @@ import {
   ArrowRight,
   Check,
   ChevronRight,
-  Info,
   Plus,
   Sparkles,
   X,
@@ -436,9 +435,7 @@ export function OverviewPage() {
           <span className="text-[11px] font-bold tracking-[0.12em] text-[var(--ink)]">
             YOUR DAILY ANCHORS
           </span>
-          <span className="text-[11px] font-medium text-[var(--faint)]">
-            Keep the important things close
-          </span>
+          
         </div>
 
         {/* Row 1: Two Daily Anchor Cards */}
@@ -539,7 +536,7 @@ export function OverviewPage() {
 
             <div className="my-2.5 flex items-end justify-between gap-4">
               <div>
-                <span className="block text-[12px] text-[var(--muted)]">Your next session</span>
+                
                 <h2 className="mt-1 text-[28px] font-bold leading-none tracking-[-0.055em] text-[var(--ink)]">
                   <span
                     className="font-mono font-extrabold"
@@ -597,9 +594,7 @@ export function OverviewPage() {
             </div>
 
             <div className="mt-auto flex items-center justify-between gap-3 border-t border-[var(--line)] pt-3">
-              <span className="text-[11px] text-[var(--faint)]">
-                Select a split to change the rotation.
-              </span>
+              <span />
               <Button
                 type="button"
                 disabled={loggingSplit}
@@ -740,10 +735,7 @@ export function OverviewPage() {
           </div>
 
           <div className="mt-auto flex items-center justify-between pt-3">
-            <span className="inline-flex items-center gap-1.5 text-[11px] text-[var(--faint)]">
-              <Info className="h-3.5 w-3.5" />
-              Tap practice sessions to log exact minutes completed.
-            </span>
+            <span />
             <button
               type="button"
               onClick={() => setShowAddModal(true)}

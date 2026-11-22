@@ -1,6 +1,6 @@
 ﻿import { addDaysIso, getMondayIso, getWeekDatesIso } from '@/modules/calendar/timelineEngine';
 
-export type HealthRuleCategory = 'SUGAR' | 'DIET' | 'HYDRATION' | 'HABIT';
+export type HealthRuleCategory = 'SUGAR' | 'DIET' | 'HYDRATION' | 'SCREEN_TIME' | 'HABIT';
 
 export interface HealthRule {
   id: string;
@@ -10,10 +10,17 @@ export interface HealthRule {
   createdAt: string;
 }
 
+export interface DailyScreenTimeLog {
+  socialMediaMin: number;
+  totalScreenMin: number | null;
+}
+
 export interface HealthStore {
   rules: HealthRule[];
   /** Map of YYYY-MM-DD -> array of completed rule IDs */
   checkedByDate: Record<string, string[]>;
+  socialMediaLimitMin: number;
+  screenTimeByDate: Record<string, DailyScreenTimeLog>;
 }
 
 export const HEALTH_PRESET_TEMPLATES: {
@@ -23,6 +30,9 @@ export const HEALTH_PRESET_TEMPLATES: {
 }[] = [
   { title: 'No added sugar / sugary drinks', category: 'SUGAR', targetNote: 'Keep blood sugar steady' },
   { title: 'Low-fat & clean whole foods', category: 'DIET', targetNote: 'Avoid deep-fried & heavy oils' },
+  { title: 'Social media under 30 min', category: 'SCREEN_TIME', targetNote: 'Instagram, TikTok, Shorts cap' },
+  { title: 'No phone 1h before sleep', category: 'SCREEN_TIME', targetNote: 'Better deep sleep & focus' },
+  { title: 'No morning scrolling (first 60m)', category: 'SCREEN_TIME', targetNote: 'Protect morning clarity' },
   { title: 'Drink 3L water', category: 'HYDRATION', targetNote: 'Hydration baseline' },
   { title: 'No eating 2h before sleep', category: 'HABIT', targetNote: 'Better deep sleep & recovery' },
   { title: 'No junk / ultra-processed food', category: 'DIET', targetNote: 'Clean fuel only' },
@@ -44,8 +54,17 @@ const DEFAULT_HEALTH_STORE: HealthStore = {
       targetNote: 'Avoid deep-fried & heavy oils',
       createdAt: '2026-01-01',
     },
+    {
+      id: 'h-social',
+      title: 'Social media under 30 min',
+      category: 'SCREEN_TIME',
+      targetNote: 'Instagram, TikTok, Shorts cap',
+      createdAt: '2026-01-01',
+    },
   ],
   checkedByDate: {},
+  socialMediaLimitMin: 30,
+  screenTimeByDate: {},
 };
 
 function healthKey(userId: string): string {
@@ -60,6 +79,11 @@ export function loadHealthStore(userId: string): HealthStore {
     return {
       rules: Array.isArray(parsed.rules) ? parsed.rules : DEFAULT_HEALTH_STORE.rules,
       checkedByDate: parsed.checkedByDate ?? {},
+      socialMediaLimitMin:
+        typeof parsed.socialMediaLimitMin === 'number' && parsed.socialMediaLimitMin > 0
+          ? parsed.socialMediaLimitMin
+          : DEFAULT_HEALTH_STORE.socialMediaLimitMin,
+      screenTimeByDate: parsed.screenTimeByDate ?? {},
     };
   } catch {
     return structuredClone(DEFAULT_HEALTH_STORE);
@@ -104,10 +128,28 @@ export function calculateHealthSummary(store: HealthStore, todayIso: string) {
     };
   });
 
+  // 7-day social media screen-time stats
+  const weekScreenEntries = weekDates
+    .map((d) => store.screenTimeByDate[d])
+    .filter((entry): entry is DailyScreenTimeLog => Boolean(entry));
+  const avgSocialMediaMin =
+    weekScreenEntries.length > 0
+      ? Math.round(
+          weekScreenEntries.reduce((sum, e) => sum + e.socialMediaMin, 0) /
+            weekScreenEntries.length
+        )
+      : null;
+  const daysUnderSocialLimit = weekScreenEntries.filter(
+    (e) => e.socialMediaMin <= store.socialMediaLimitMin
+  ).length;
+
   return {
     totalRules,
     doneToday,
     currentStreak,
     weekStatus,
+    avgSocialMediaMin,
+    daysUnderSocialLimit,
+    loggedScreenDaysThisWeek: weekScreenEntries.length,
   };
 }

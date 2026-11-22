@@ -200,9 +200,7 @@ export function SettingsPage() {
             <h2 className="text-[20px] font-bold tracking-[-0.04em] text-[var(--ink)]">
               Personal preferences
             </h2>
-            <p className="mt-1 text-[12px] text-[var(--muted)]">
-              Keep your calendar aligned with your local time.
-            </p>
+            
 
             <div className="mt-5 space-y-4">
               <label className="block text-[12px] font-semibold text-[var(--ink)]">
@@ -237,9 +235,7 @@ export function SettingsPage() {
             <h2 className="text-[20px] font-bold tracking-[-0.04em] text-[var(--ink)]">
               Session reminders
             </h2>
-            <p className="mb-4 mt-1 text-[12px] text-[var(--muted)]">
-              Browser notifications and in-app alerts before timed blocks start.
-            </p>
+            
             <ReminderPreferencesPanel
               prefs={reminderPrefs}
               permission={permission}

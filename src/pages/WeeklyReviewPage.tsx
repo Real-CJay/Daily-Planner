@@ -307,9 +307,7 @@ export function WeeklyReviewPage() {
           <h2 className="text-[20px] font-bold tracking-[-0.04em] text-[var(--ink)]">
             This week at a glance
           </h2>
-          <p className="mt-1 text-[12px] text-[var(--muted)]">
-            Only your recorded activity is counted.
-          </p>
+          
 
           <div className="mt-4 divide-y divide-[var(--line)] border-t border-[var(--line)] text-[12.5px] text-[var(--muted)]">
             <div className="flex items-start gap-3 py-3.5">
@@ -351,9 +349,7 @@ export function WeeklyReviewPage() {
           <h2 className="text-[20px] font-bold tracking-[-0.04em] text-[var(--ink)]">
             Outside running
           </h2>
-          <p className="mt-1 text-[12px] text-[var(--muted)]">
-            Your other commitments matter too.
-          </p>
+          
 
           <div className="mt-4 divide-y divide-[var(--line)] border-t border-[var(--line)] text-[12.5px]">
             <div className="flex items-center justify-between py-3.5 text-[var(--muted)]">
@@ -391,9 +387,7 @@ export function WeeklyReviewPage() {
             <h2 className="text-[20px] font-bold tracking-[-0.04em] text-[var(--ink)]">
               Your reflection
             </h2>
-            <p className="mt-0.5 text-[12px] text-[var(--muted)]">
-              One small note can make next week better.
-            </p>
+            
           </div>
           <button
             type="button"

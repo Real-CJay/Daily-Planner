@@ -1,4 +1,5 @@
 ﻿import { addDaysIso, buildDateRange } from '@/modules/calendar/scheduleEngine';
+import { getMondayIso } from '@/modules/calendar/timelineEngine';
 import type { ActivityCategory } from '@/types/domain';
 
 export type CommitmentTier = 'NON_NEGOTIABLE' | 'NEGOTIABLE';
@@ -9,7 +10,18 @@ export interface PlannerCommitment {
   category: ActivityCategory;
   tier: CommitmentTier;
   targetMinutes: number | null;
+  /** For NEGOTIABLE commitments: how many times per Mon-Sun week */
+  targetPerWeek?: number | null;
+  /** Optional preferred ISO weekdays (1=Mon .. 7=Sun) for planning convenience */
+  intendedDays?: number[];
   createdAt: string;
+}
+
+export interface LockedNegotiableRule {
+  id: string;
+  title: string;
+  targetPerWeek: number;
+  intendedDays: number[];
 }
 
 export interface MonkModeSession {
@@ -20,6 +32,7 @@ export interface MonkModeSession {
   plannedDays: number;
   lockedCommitmentIds: string[];
   lockedCommitmentTitles: string[];
+  lockedNegotiables?: LockedNegotiableRule[];
   status: 'ACTIVE' | 'COMPLETED' | 'ENDED_EARLY';
   endedAtDate: string | null;
   earlyExitReason: string | null;
@@ -32,6 +45,14 @@ export interface MonkDayPoint {
   score: number;
 }
 
+export interface WeeklyQuotaStatus {
+  commitmentId: string;
+  title: string;
+  completed: number;
+  required: number;
+  passed: boolean;
+}
+
 export interface MonkModeReport {
   sessionId: string;
   title: string;
@@ -41,6 +62,9 @@ export interface MonkModeReport {
   remainingDays: number;
   compliantDays: number;
   brokenDays: number;
+  weeklyQuotasPassed: number;
+  weeklyQuotasMissed: number;
+  currentWeekQuotas: WeeklyQuotaStatus[];
   compliancePct: number;
   rawScore: number;
   earlyExitPenalty: number;
@@ -73,6 +97,16 @@ const DEFAULT_STORE: PlannerDisciplineStore = {
       category: 'RECOVERY',
       tier: 'NON_NEGOTIABLE',
       targetMinutes: null,
+      createdAt: '2026-01-01',
+    },
+    {
+      id: 'neg-drums-3x',
+      title: 'Drumming Practice',
+      category: 'DRUMMING',
+      tier: 'NEGOTIABLE',
+      targetMinutes: 45,
+      targetPerWeek: 3,
+      intendedDays: [2, 4, 6],
       createdAt: '2026-01-01',
     },
   ],
@@ -114,17 +148,38 @@ export function isCommitmentLocked(
   activeMonk: MonkModeSession | null
 ): boolean {
   if (!activeMonk || activeMonk.status !== 'ACTIVE') return false;
-  return (
+  if (
     commitment.tier === 'NON_NEGOTIABLE' &&
     activeMonk.lockedCommitmentIds.includes(commitment.id)
-  );
+  ) {
+    return true;
+  }
+  return Boolean(activeMonk.lockedNegotiables?.some((n) => n.id === commitment.id));
+}
+
+export function getWeeklyCompletionCount(
+  commitmentId: string,
+  completionsByDate: Record<string, string[]>,
+  referenceDateIso: string
+): number {
+  const monday = getMondayIso(referenceDateIso);
+  const sunday = addDaysIso(monday, 6);
+  const weekDates = buildDateRange(monday, sunday);
+  let count = 0;
+  for (const d of weekDates) {
+    if ((completionsByDate[d] ?? []).includes(commitmentId)) {
+      count++;
+    }
+  }
+  return count;
 }
 
 /**
- * Evaluates a Monk Mode session using an exponential compounding curve:
- * - Starts at 1.00
- * - Each compliant day (all locked non-negotiables completed): score *= 1.01
- * - Each broken day: score *= 0.99
+ * Evaluates a Monk Mode session:
+ * - Daily Non-Negotiables: each compliant day *= 1.01, each broken day *= 0.99.
+ * - Weekly Negotiables: evaluated per Mon-Sun week (not strict days). Skipping an
+ *   intended day and completing it on another day in the same week counts as a PASS.
+ *   Each closed week where count >= required *= 1.01; missed quota *= 0.99.
  * - Early exit applies a proportional penalty based on remaining days / plannedDays.
  */
 export function evaluateMonkModeReport(
@@ -152,7 +207,7 @@ export function evaluateMonkModeReport(
   for (const date of dates) {
     const doneIds = new Set(completionsByDate[date] ?? []);
     const allDone =
-      session.lockedCommitmentIds.length > 0 &&
+      session.lockedCommitmentIds.length === 0 ||
       session.lockedCommitmentIds.every((id) => doneIds.has(id));
 
     if (allDone) {
@@ -166,9 +221,63 @@ export function evaluateMonkModeReport(
     curve.push({ date, compliant: allDone, score });
   }
 
+  // Evaluate flexible weekly quotas for locked negotiables
+  const lockedNegotiables = session.lockedNegotiables ?? [];
+  const weekBuckets = new Map<string, string[]>();
+  for (const d of dates) {
+    const mon = getMondayIso(d);
+    const list = weekBuckets.get(mon) ?? [];
+    list.push(d);
+    weekBuckets.set(mon, list);
+  }
+
+  let weeklyQuotasPassed = 0;
+  let weeklyQuotasMissed = 0;
+  const currentWeekMonday = getMondayIso(referenceTodayIso);
+  const currentWeekQuotas: WeeklyQuotaStatus[] = [];
+
+  for (const [monday, weekDatesInSession] of weekBuckets.entries()) {
+    const sunday = addDaysIso(monday, 6);
+    const isClosedWeek =
+      session.status !== 'ACTIVE' || sunday <= effectiveEnd;
+
+    for (const rule of lockedNegotiables) {
+      let completed = 0;
+      for (const d of weekDatesInSession) {
+        if ((completionsByDate[d] ?? []).includes(rule.id)) {
+          completed++;
+        }
+      }
+      const required = Math.min(rule.targetPerWeek, weekDatesInSession.length);
+      const passed = completed >= required;
+
+      if (monday === currentWeekMonday) {
+        currentWeekQuotas.push({
+          commitmentId: rule.id,
+          title: rule.title,
+          completed,
+          required: rule.targetPerWeek,
+          passed: completed >= rule.targetPerWeek,
+        });
+      }
+
+      if (isClosedWeek) {
+        if (passed) {
+          weeklyQuotasPassed++;
+          score = Number((score * 1.01).toFixed(4));
+        } else {
+          weeklyQuotasMissed++;
+          score = Number((score * 0.99).toFixed(4));
+        }
+      }
+    }
+  }
+
   const elapsedDays = dates.length;
   const remainingDays = Math.max(0, session.plannedDays - elapsedDays);
-  const compliancePct = elapsedDays > 0 ? Math.round((compliantDays / elapsedDays) * 100) : 0;
+  const totalChecks = elapsedDays + weeklyQuotasPassed + weeklyQuotasMissed;
+  const totalPasses = compliantDays + weeklyQuotasPassed;
+  const compliancePct = totalChecks > 0 ? Math.round((totalPasses / totalChecks) * 100) : 0;
 
   const rawScore = Number(score.toFixed(4));
   let earlyExitPenalty = 0;
@@ -188,6 +297,9 @@ export function evaluateMonkModeReport(
     remainingDays,
     compliantDays,
     brokenDays,
+    weeklyQuotasPassed,
+    weeklyQuotasMissed,
+    currentWeekQuotas,
     compliancePct,
     rawScore,
     earlyExitPenalty,
@@ -202,6 +314,7 @@ export function createMonkModeSession(params: {
   startDate: string;
   plannedDays: number;
   nonNegotiables: PlannerCommitment[];
+  negotiables?: PlannerCommitment[];
 }): MonkModeSession {
   const days = Math.max(3, Math.min(365, Math.round(params.plannedDays)));
   return {
@@ -212,6 +325,12 @@ export function createMonkModeSession(params: {
     plannedDays: days,
     lockedCommitmentIds: params.nonNegotiables.map((c) => c.id),
     lockedCommitmentTitles: params.nonNegotiables.map((c) => c.title),
+    lockedNegotiables: (params.negotiables ?? []).map((n) => ({
+      id: n.id,
+      title: n.title,
+      targetPerWeek: Math.max(1, Math.min(7, n.targetPerWeek ?? 3)),
+      intendedDays: n.intendedDays ?? [],
+    })),
     status: 'ACTIVE',
     endedAtDate: null,
     earlyExitReason: null,

@@ -271,9 +271,7 @@ export function SleepPage() {
               <h2 className="text-[21px] font-bold tracking-[-0.04em] text-[var(--ink)]">
                 Log bedtime &amp; wake time
               </h2>
-              <p className="mt-1 text-[12px] text-[var(--muted)]">
-                Mark when you went to sleep and got up, or upload a tracker screenshot for stages.
-              </p>
+              
             </div>
             <div className="font-mono text-[28px] font-bold leading-none tracking-[-0.05em] text-[var(--sleep)] tabular-nums">
               {formatMinutesAsHrMin(computedInlineMin)}

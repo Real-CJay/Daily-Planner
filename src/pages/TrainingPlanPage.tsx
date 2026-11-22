@@ -41,6 +41,7 @@ import { PlannedWorkoutModal } from '@/modules/plan/PlannedWorkoutModal';
 import {
   createMonkModeSession,
   evaluateMonkModeReport,
+  getWeeklyCompletionCount,
   isCommitmentLocked,
   loadDisciplineStore,
   saveDisciplineStore,
@@ -78,7 +79,7 @@ export function TrainingPlanPage() {
   const [checkIns, setCheckIns] = useState<ReadinessCheckIn[]>([]);
   const [plannedWorkouts, setPlannedWorkouts] = useState<PlannedWorkout[]>([]);
 
-  // Non-Negotiables + Monk Mode store
+  // Non-Negotiables + Negotiables + Monk Mode store
   const [discipline, setDiscipline] = useState<PlannerDisciplineStore>({
     commitments: [],
     completionsByDate: {},
@@ -89,11 +90,14 @@ export function TrainingPlanPage() {
   const [newCommitCategory, setNewCommitCategory] = useState<ActivityCategory>('VOCAL');
   const [newCommitTier, setNewCommitTier] = useState<CommitmentTier>('NON_NEGOTIABLE');
   const [newCommitMin, setNewCommitMin] = useState('30');
+  const [newCommitPerWeek, setNewCommitPerWeek] = useState(3);
+  const [newCommitIntendedDays, setNewCommitIntendedDays] = useState<number[]>([1, 3, 5]);
 
   // Monk Mode Modals
   const [showStartMonkModal, setShowStartMonkModal] = useState(false);
   const [monkTitle, setMonkTitle] = useState('30-Day Monk Mode');
   const [monkDays, setMonkDays] = useState(30);
+  const [selectedMonkNegIds, setSelectedMonkNegIds] = useState<string[]>([]);
   const [showEndMonkModal, setShowEndMonkModal] = useState(false);
   const [earlyExitReason, setEarlyExitReason] = useState('');
   const [viewingReport, setViewingReport] = useState<MonkModeReport | null>(null);
@@ -173,6 +177,12 @@ export function TrainingPlanPage() {
     [discipline.completionsByDate, today]
   );
 
+  function toggleIntendedDay(isoDay: number) {
+    setNewCommitIntendedDays((prev) =>
+      prev.includes(isoDay) ? prev.filter((d) => d !== isoDay) : [...prev, isoDay].sort()
+    );
+  }
+
   function toggleCommitmentToday(id: string) {
     const set = new Set(discipline.completionsByDate[today] ?? []);
     if (set.has(id)) set.delete(id);
@@ -196,6 +206,8 @@ export function TrainingPlanPage() {
       category: newCommitCategory,
       tier: newCommitTier,
       targetMinutes: newCommitMin.trim() ? Number(newCommitMin) : null,
+      targetPerWeek: newCommitTier === 'NEGOTIABLE' ? Math.max(1, Math.min(7, newCommitPerWeek)) : null,
+      intendedDays: newCommitTier === 'NEGOTIABLE' ? newCommitIntendedDays : [],
       createdAt: today,
     };
     updateDiscipline({ ...discipline, commitments: [...discipline.commitments, item] });
@@ -207,7 +219,7 @@ export function TrainingPlanPage() {
     const target = discipline.commitments.find((c) => c.id === id);
     if (!target) return;
     if (isCommitmentLocked(target, discipline.activeMonk)) {
-      setError('Cannot remove a locked Non-Negotiable during Monk Mode.');
+      setError('Cannot remove a locked commitment while Monk Mode is active.');
       return;
     }
     updateDiscipline({
@@ -216,10 +228,16 @@ export function TrainingPlanPage() {
     });
   }
 
+  function openStartMonk() {
+    setSelectedMonkNegIds(negotiables.map((n) => n.id));
+    setShowStartMonkModal(true);
+  }
+
   function handleStartMonkMode(e: FormEvent) {
     e.preventDefault();
-    if (nonNegotiables.length === 0) {
-      setError('Add at least one Non-Negotiable before starting Monk Mode.');
+    const chosenNegotiables = negotiables.filter((n) => selectedMonkNegIds.includes(n.id));
+    if (nonNegotiables.length === 0 && chosenNegotiables.length === 0) {
+      setError('Select at least one Non-Negotiable or Negotiable before starting Monk Mode.');
       return;
     }
     const session = createMonkModeSession({
@@ -227,10 +245,13 @@ export function TrainingPlanPage() {
       startDate: today,
       plannedDays: monkDays,
       nonNegotiables,
+      negotiables: chosenNegotiables,
     });
     updateDiscipline({ ...discipline, activeMonk: session });
     setShowStartMonkModal(false);
-    setNotice(`Monk Mode activated for ${session.plannedDays} days. Non-Negotiables are now locked.`);
+    setNotice(
+      `Monk Mode locked for ${session.plannedDays} days (${nonNegotiables.length} daily + ${chosenNegotiables.length} flexible weekly).`
+    );
   }
 
   function handleCompleteOrEndMonkEarly(e: FormEvent) {
@@ -329,7 +350,7 @@ export function TrainingPlanPage() {
           {!discipline.activeMonk ? (
             <button
               type="button"
-              onClick={() => setShowStartMonkModal(true)}
+              onClick={openStartMonk}
               className="inline-flex h-10 items-center gap-2 rounded-[9px] border border-[var(--line-strong)] bg-[var(--surface)] px-3.5 text-[12.5px] font-bold text-[var(--ink)] transition-colors hover:border-[var(--blue)] hover:text-[var(--blue)]"
             >
               <Lock className="h-3.5 w-3.5" />
@@ -344,9 +365,7 @@ export function TrainingPlanPage() {
               className="inline-flex h-10 items-center gap-2 rounded-[9px] border border-[var(--blue)]/40 bg-[var(--blue-lite)] px-3.5 text-[12.5px] font-bold text-[var(--blue-ink)]"
             >
               <Lock className="h-3.5 w-3.5" />
-              <span>
-                Monk Mode · {activeMonkReport?.finalScore.toFixed(2)}×
-              </span>
+              <span>Monk Mode · {activeMonkReport?.finalScore.toFixed(2)}×</span>
             </button>
           )}
 
@@ -393,7 +412,7 @@ export function TrainingPlanPage() {
           style={{ background: 'color-mix(in srgb, var(--blue) 6%, var(--surface))' }}
         >
           <div className="flex flex-col justify-between gap-4 lg:flex-row lg:items-center">
-            <div className="space-y-1">
+            <div className="space-y-1.5">
               <div className="flex flex-wrap items-center gap-2">
                 <span className="inline-flex items-center gap-1.5 rounded-md bg-[var(--blue)] px-2 py-0.5 font-mono text-[10px] font-bold uppercase text-[var(--blue-btn-text)]">
                   <Lock className="h-3 w-3" />
@@ -412,8 +431,25 @@ export function TrainingPlanPage() {
                 <strong className="text-[var(--ink)]">
                   {activeMonkReport.finalScore.toFixed(3)}×
                 </strong>{' '}
-                compounding score (1.01/0.99 curve) · {activeMonkReport.brokenDays} break(s)
+                compounding score · {activeMonkReport.brokenDays} daily break(s)
               </p>
+
+              {activeMonkReport.currentWeekQuotas.length > 0 && (
+                <div className="flex flex-wrap gap-1.5 pt-1">
+                  {activeMonkReport.currentWeekQuotas.map((q) => (
+                    <span
+                      key={q.commitmentId}
+                      className={`rounded-md border px-2 py-0.5 font-mono text-[10.5px] font-semibold ${
+                        q.passed
+                          ? 'border-[#3f7a56]/40 bg-[#3f7a56]/12 text-[#3f7a56] dark:text-[#7fc29b]'
+                          : 'border-[var(--line)] bg-[var(--surface)] text-[var(--muted)]'
+                      }`}
+                    >
+                      {q.title}: {q.completed}/{q.required} this wk
+                    </span>
+                  ))}
+                </div>
+              )}
             </div>
 
             <div className="flex flex-wrap items-center gap-2">
@@ -441,7 +477,7 @@ export function TrainingPlanPage() {
 
       {/* Non-Negotiables vs. Negotiables Section */}
       <div className="grid gap-5 lg:grid-cols-2">
-        {/* Non-Negotiables */}
+        {/* Non-Negotiables (Daily) */}
         <section className="rounded-[15px] border border-[var(--line)] bg-[var(--surface)] p-6">
           <div className="flex items-center justify-between gap-2">
             <div>
@@ -456,16 +492,14 @@ export function TrainingPlanPage() {
                   </span>
                 )}
               </div>
-              <p className="mt-0.5 text-[12px] text-[var(--muted)]">
-                Fixed daily standards. Every full day compounds by ×1.01.
-              </p>
+              
             </div>
           </div>
 
           <div className="mt-4 divide-y divide-[var(--line)] border-t border-[var(--line)]">
             {nonNegotiables.length === 0 ? (
               <p className="py-6 text-xs text-[var(--muted)]">
-                No Non-Negotiables set yet. Add one below (e.g., 30 min Vocal every day).
+                No Non-Negotiables set yet. Add one on the right.
               </p>
             ) : (
               nonNegotiables.map((item) => {
@@ -516,24 +550,34 @@ export function TrainingPlanPage() {
           </div>
         </section>
 
-        {/* Negotiables + Add Form */}
+        {/* Negotiables (Flexible Weekly Quotas) + Add Form */}
         <section className="flex flex-col justify-between rounded-[15px] border border-[var(--line)] bg-[var(--surface)] p-6">
           <div>
             <h2 className="text-[19px] font-bold tracking-[-0.04em] text-[var(--ink)]">
-              Negotiables
+              Negotiables (Weekly Quotas)
             </h2>
-            <p className="mt-0.5 text-[12px] text-[var(--muted)]">
-              Flexible targets you can skip occasionally without breaking Monk Mode.
-            </p>
+            
 
             <div className="mt-4 divide-y divide-[var(--line)] border-t border-[var(--line)]">
               {negotiables.length === 0 ? (
                 <p className="py-5 text-xs text-[var(--muted)]">
-                  No flexible negotiables added yet.
+                  No weekly-quota negotiables added yet.
                 </p>
               ) : (
                 negotiables.map((item) => {
                   const done = todayDoneCommitIds.has(item.id);
+                  const locked = isCommitmentLocked(item, discipline.activeMonk);
+                  const weekDone = getWeeklyCompletionCount(
+                    item.id,
+                    discipline.completionsByDate,
+                    today
+                  );
+                  const targetWk = item.targetPerWeek ?? 3;
+                  const intendedLabels = (item.intendedDays ?? [])
+                    .map((d) => ISO_WEEKDAYS.find((w) => w.iso === d)?.short)
+                    .filter(Boolean)
+                    .join(', ');
+
                   return (
                     <div key={item.id} className="flex items-center gap-3 py-3">
                       <button
@@ -548,26 +592,42 @@ export function TrainingPlanPage() {
                         <Check className="h-3.5 w-3.5 stroke-[2.8]" />
                       </button>
                       <div className="min-w-0 flex-1">
-                        <strong
-                          className={`block truncate text-[13px] font-bold ${
-                            done ? 'text-[var(--faint)] line-through' : 'text-[var(--ink)]'
-                          }`}
-                        >
-                          {item.title}
-                        </strong>
+                        <div className="flex items-center gap-2">
+                          <strong
+                            className={`truncate text-[13px] font-bold ${
+                              done ? 'text-[var(--faint)] line-through' : 'text-[var(--ink)]'
+                            }`}
+                          >
+                            {item.title}
+                          </strong>
+                          <span
+                            className={`shrink-0 rounded px-1.5 py-0.5 font-mono text-[10px] font-bold ${
+                              weekDone >= targetWk
+                                ? 'bg-[#3f7a56]/15 text-[#3f7a56] dark:text-[#7fc29b]'
+                                : 'bg-[var(--surface-2)] text-[var(--muted)]'
+                            }`}
+                          >
+                            {weekDone}/{targetWk} wk
+                          </span>
+                        </div>
                         <span className="text-[11px] text-[var(--muted)]">
                           {CATEGORY_SHORT_LABELS[item.category]}
                           {item.targetMinutes ? ` · ${item.targetMinutes}m` : ''}
+                          {intendedLabels ? ` · Plan: ${intendedLabels}` : ''}
                         </span>
                       </div>
-                      <button
-                        type="button"
-                        onClick={() => handleRemoveCommitment(item.id)}
-                        aria-label={`Remove ${item.title}`}
-                        className="rounded p-1.5 text-[var(--faint)] hover:bg-red-500/10 hover:text-red-600"
-                      >
-                        <Trash2 className="h-3.5 w-3.5" />
-                      </button>
+                      {locked ? (
+                        <Lock className="h-3.5 w-3.5 shrink-0 text-[var(--faint)]" />
+                      ) : (
+                        <button
+                          type="button"
+                          onClick={() => handleRemoveCommitment(item.id)}
+                          aria-label={`Remove ${item.title}`}
+                          className="rounded p-1.5 text-[var(--faint)] hover:bg-red-500/10 hover:text-red-600"
+                        >
+                          <Trash2 className="h-3.5 w-3.5" />
+                        </button>
+                      )}
                     </div>
                   );
                 })
@@ -577,52 +637,90 @@ export function TrainingPlanPage() {
 
           <form
             onSubmit={handleAddCommitment}
-            className="mt-4 flex flex-wrap items-center gap-2 border-t border-[var(--line)] pt-4"
+            className="mt-4 space-y-2.5 border-t border-[var(--line)] pt-4"
           >
-            <input
-              type="text"
-              value={newCommitTitle}
-              onChange={(e) => setNewCommitTitle(e.target.value)}
-              placeholder="Add commitment (e.g. 30m Vocal, Read 20p)..."
-              className="min-w-[160px] flex-1 rounded-[8px] border border-[var(--line-strong)] bg-[var(--input-bg)] px-3 py-1.5 text-[12px] text-[var(--ink)] placeholder:text-[var(--faint)] focus:border-[var(--blue)] focus:outline-none"
-            />
-            <select
-              value={newCommitTier}
-              onChange={(e) => setNewCommitTier(e.target.value as CommitmentTier)}
-              className="rounded-[8px] border border-[var(--line-strong)] bg-[var(--input-bg)] px-2 py-1.5 text-[11.5px] font-semibold text-[var(--ink)]"
-            >
-              <option value="NON_NEGOTIABLE" disabled={Boolean(discipline.activeMonk)}>
-                Non-Negotiable
-              </option>
-              <option value="NEGOTIABLE">Negotiable</option>
-            </select>
-            <select
-              value={newCommitCategory}
-              onChange={(e) => setNewCommitCategory(e.target.value as ActivityCategory)}
-              className="rounded-[8px] border border-[var(--line-strong)] bg-[var(--input-bg)] px-2 py-1.5 text-[11.5px] text-[var(--ink)]"
-            >
-              {Object.entries(ACTIVITY_CATEGORY_LABELS).map(([k, label]) => (
-                <option key={k} value={k}>
-                  {label}
+            <div className="flex flex-wrap items-center gap-2">
+              <input
+                type="text"
+                value={newCommitTitle}
+                onChange={(e) => setNewCommitTitle(e.target.value)}
+                placeholder="Add commitment (e.g. 30m Vocal, Drums 3x/wk)..."
+                className="min-w-[160px] flex-1 rounded-[8px] border border-[var(--line-strong)] bg-[var(--input-bg)] px-3 py-1.5 text-[12px] text-[var(--ink)] placeholder:text-[var(--faint)] focus:border-[var(--blue)] focus:outline-none"
+              />
+              <select
+                value={newCommitTier}
+                onChange={(e) => setNewCommitTier(e.target.value as CommitmentTier)}
+                className="rounded-[8px] border border-[var(--line-strong)] bg-[var(--input-bg)] px-2 py-1.5 text-[11.5px] font-semibold text-[var(--ink)]"
+              >
+                <option value="NON_NEGOTIABLE" disabled={Boolean(discipline.activeMonk)}>
+                  Non-Negotiable
                 </option>
-              ))}
-            </select>
-            <input
-              type="number"
-              min={5}
-              max={240}
-              value={newCommitMin}
-              onChange={(e) => setNewCommitMin(e.target.value)}
-              placeholder="min"
-              className="w-16 rounded-[8px] border border-[var(--line-strong)] bg-[var(--input-bg)] px-2 py-1.5 font-mono text-[11.5px] text-[var(--ink)]"
-            />
-            <button
-              type="submit"
-              className="inline-flex h-8 items-center gap-1 rounded-[8px] bg-[var(--blue)] px-3 text-[11.5px] font-bold text-[var(--blue-btn-text)]"
-            >
-              <Plus className="h-3.5 w-3.5" />
-              <span>Add</span>
-            </button>
+                <option value="NEGOTIABLE">Negotiable</option>
+              </select>
+              <select
+                value={newCommitCategory}
+                onChange={(e) => setNewCommitCategory(e.target.value as ActivityCategory)}
+                className="rounded-[8px] border border-[var(--line-strong)] bg-[var(--input-bg)] px-2 py-1.5 text-[11.5px] text-[var(--ink)]"
+              >
+                {Object.entries(ACTIVITY_CATEGORY_LABELS).map(([k, label]) => (
+                  <option key={k} value={k}>
+                    {label}
+                  </option>
+                ))}
+              </select>
+              <input
+                type="number"
+                min={5}
+                max={240}
+                value={newCommitMin}
+                onChange={(e) => setNewCommitMin(e.target.value)}
+                placeholder="min"
+                className="w-16 rounded-[8px] border border-[var(--line-strong)] bg-[var(--input-bg)] px-2 py-1.5 font-mono text-[11.5px] text-[var(--ink)]"
+              />
+              <button
+                type="submit"
+                className="inline-flex h-8 items-center gap-1 rounded-[8px] bg-[var(--blue)] px-3 text-[11.5px] font-bold text-[var(--blue-btn-text)]"
+              >
+                <Plus className="h-3.5 w-3.5" />
+                <span>Add</span>
+              </button>
+            </div>
+
+            {newCommitTier === 'NEGOTIABLE' && (
+              <div className="flex flex-wrap items-center gap-2 text-[11px] text-[var(--muted)]">
+                <label className="flex items-center gap-1.5 font-semibold">
+                  <span>Times/wk:</span>
+                  <input
+                    type="number"
+                    min={1}
+                    max={7}
+                    value={newCommitPerWeek}
+                    onChange={(e) => setNewCommitPerWeek(Math.max(1, Math.min(7, Number(e.target.value) || 1)))}
+                    className="w-12 rounded-[6px] border border-[var(--line-strong)] bg-[var(--input-bg)] px-1.5 py-0.5 text-center font-mono text-[11.5px] text-[var(--ink)]"
+                  />
+                </label>
+                <span className="ml-1 font-semibold">Intended days:</span>
+                <div className="flex gap-1">
+                  {ISO_WEEKDAYS.map((d) => {
+                    const active = newCommitIntendedDays.includes(d.iso);
+                    return (
+                      <button
+                        key={d.iso}
+                        type="button"
+                        onClick={() => toggleIntendedDay(d.iso)}
+                        className={`rounded px-1.5 py-0.5 font-mono text-[10px] font-bold ${
+                          active
+                            ? 'bg-[var(--blue)] text-[var(--blue-btn-text)]'
+                            : 'border border-[var(--line)] bg-[var(--bg)] text-[var(--muted)]'
+                        }`}
+                      >
+                        {d.short.slice(0, 2)}
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
           </form>
         </section>
       </div>
@@ -635,7 +733,7 @@ export function TrainingPlanPage() {
               7-day schedule
             </h2>
             <p className="mt-0.5 text-[12px] text-[var(--muted)]">
-              {formatShortDate(today)} – {formatShortDate(windowEnd)} · Runs, Karate, Music, Study &amp; Health
+              {formatShortDate(today)} – {formatShortDate(windowEnd)} · Runs, Karate, Music, Study &amp; Intended Negotiables
             </p>
           </div>
           <button
@@ -662,6 +760,9 @@ export function TrainingPlanPage() {
               const weekdayLabel = ISO_WEEKDAYS.find((d) => d.iso === iso)?.short ?? '';
               const workout = plannedWorkouts.find((w) => w.plan_date === date) ?? null;
               const dayBlocks = weekOccurrences.filter((o) => o.date === date);
+              const intendedNegotiables = negotiables.filter((n) =>
+                (n.intendedDays ?? []).includes(iso)
+              );
               const isToday = date === today;
 
               return (
@@ -707,7 +808,7 @@ export function TrainingPlanPage() {
                       </button>
                     )}
 
-                    {dayBlocks.slice(0, 4).map((occ) => (
+                    {dayBlocks.slice(0, 3).map((occ) => (
                       <button
                         key={occ.occurrenceKey}
                         type="button"
@@ -729,7 +830,21 @@ export function TrainingPlanPage() {
                       </button>
                     ))}
 
-                    {!workout && dayBlocks.length === 0 && (
+                    {intendedNegotiables.map((n) => (
+                      <div
+                        key={n.id}
+                        title="Intended negotiable day (flexible)"
+                        className="flex items-center gap-1.5 rounded-lg border border-dashed border-[var(--line-strong)] px-2 py-1 text-[10.5px] text-[var(--muted)]"
+                      >
+                        <span
+                          className="h-1.5 w-1.5 shrink-0 rounded-full"
+                          style={{ backgroundColor: CATEGORY_COLORS[n.category] }}
+                        />
+                        <span className="truncate">{n.title}</span>
+                      </div>
+                    ))}
+
+                    {!workout && dayBlocks.length === 0 && intendedNegotiables.length === 0 && (
                       <span className="my-auto text-center text-[11px] text-[var(--faint)]">
                         Open day
                       </span>
@@ -769,7 +884,7 @@ export function TrainingPlanPage() {
                     <strong className="text-[13.5px] font-bold text-[var(--ink)]">{s.title}</strong>
                     <div className="mt-0.5 text-[11.5px] text-[var(--muted)]">
                       {formatShortDate(s.startDate)} → {formatShortDate(s.endedAtDate ?? s.endDate)} ·{' '}
-                      {rep.compliancePct}% compliance · {rep.brokenDays} break(s)
+                      {rep.compliancePct}% compliance · {rep.brokenDays} daily break(s)
                       {s.status === 'ENDED_EARLY' ? ' · Ended early' : ' · Completed'}
                     </div>
                   </div>
@@ -793,7 +908,7 @@ export function TrainingPlanPage() {
         </section>
       )}
 
-      {/* Start Monk Mode Modal */}
+      {/* Start Monk Mode Modal (Now includes Negotiables selection) */}
       {showStartMonkModal && (
         <div
           className="fixed inset-0 z-50 flex items-center justify-center bg-black/55 p-4 backdrop-blur-[2px]"
@@ -801,7 +916,7 @@ export function TrainingPlanPage() {
             if (e.target === e.currentTarget) setShowStartMonkModal(false);
           }}
         >
-          <div className="w-full max-w-[460px] rounded-2xl border border-[var(--line)] bg-[var(--surface)] p-6 text-[var(--ink)] shadow-2xl">
+          <div className="max-h-[90vh] w-full max-w-[490px] overflow-y-auto rounded-2xl border border-[var(--line)] bg-[var(--surface)] p-6 text-[var(--ink)] shadow-2xl">
             <div className="flex items-center justify-between border-b border-[var(--line)] pb-3.5">
               <h2 className="text-[20px] font-bold tracking-[-0.04em]">Activate Monk Mode</h2>
               <button
@@ -822,6 +937,7 @@ export function TrainingPlanPage() {
                   className="mt-1.5 block w-full rounded-[9px] border border-[var(--line-strong)] bg-[var(--input-bg)] px-3 py-2 text-[13px] text-[var(--ink)]"
                 />
               </label>
+
               <div>
                 <span className="block text-[12px] font-semibold text-[var(--muted)]">
                   Duration (days)
@@ -846,16 +962,63 @@ export function TrainingPlanPage() {
                   ))}
                 </div>
               </div>
+
               <div className="rounded-xl border border-[var(--line)] bg-[var(--bg)] p-3.5 text-[12px] text-[var(--muted)]">
                 <strong className="block text-[var(--ink)]">
-                  Locking {nonNegotiables.length} Non-Negotiable(s):
+                  Daily Non-Negotiables ({nonNegotiables.length}):
                 </strong>
-                <ul className="mt-1.5 list-disc space-y-1 pl-4">
-                  {nonNegotiables.map((c) => (
-                    <li key={c.id}>{c.title}</li>
-                  ))}
-                </ul>
+                {nonNegotiables.length === 0 ? (
+                  <p className="mt-1 text-[11px]">None added.</p>
+                ) : (
+                  <ul className="mt-1.5 list-disc space-y-1 pl-4">
+                    {nonNegotiables.map((c) => (
+                      <li key={c.id}>{c.title}</li>
+                    ))}
+                  </ul>
+                )}
               </div>
+
+              {negotiables.length > 0 && (
+                <div className="rounded-xl border border-[var(--line)] bg-[var(--bg)] p-3.5 text-[12px]">
+                  <strong className="block text-[var(--ink)]">
+                    Include Flexible Weekly Negotiables:
+                  </strong>
+                  <p className="mt-0.5 text-[11px] text-[var(--muted)]">
+                    Hit the weekly count on any days to pass.
+                  </p>
+                  <div className="mt-2.5 space-y-2">
+                    {negotiables.map((n) => {
+                      const checked = selectedMonkNegIds.includes(n.id);
+                      return (
+                        <label
+                          key={n.id}
+                          className="flex cursor-pointer items-center justify-between gap-2 text-[12px] text-[var(--ink)]"
+                        >
+                          <span className="flex items-center gap-2">
+                            <input
+                              type="checkbox"
+                              checked={checked}
+                              onChange={() =>
+                                setSelectedMonkNegIds((prev) =>
+                                  prev.includes(n.id)
+                                    ? prev.filter((id) => id !== n.id)
+                                    : [...prev, n.id]
+                                )
+                              }
+                              className="h-4 w-4 accent-[var(--blue)]"
+                            />
+                            <span className="font-semibold">{n.title}</span>
+                          </span>
+                          <span className="font-mono text-[11px] text-[var(--muted)]">
+                            {n.targetPerWeek ?? 3}×/wk
+                          </span>
+                        </label>
+                      );
+                    })}
+                  </div>
+                </div>
+              )}
+
               <div className="flex justify-end gap-2 border-t border-[var(--line)] pt-4">
                 <button
                   type="button"
@@ -877,7 +1040,7 @@ export function TrainingPlanPage() {
         </div>
       )}
 
-      {/* End Monk Mode Early Modal (Requires Reason + Shows Penalty) */}
+      {/* End Monk Mode Early Modal */}
       {showEndMonkModal && activeMonkReport && (
         <div
           className="fixed inset-0 z-50 flex items-center justify-center bg-black/55 p-4 backdrop-blur-[2px]"
@@ -970,9 +1133,12 @@ export function TrainingPlanPage() {
                 </strong>
               </div>
               <div>
-                <span className="text-[10px] font-bold uppercase text-[var(--muted)]">Breaks</span>
+                <span className="text-[10px] font-bold uppercase text-[var(--muted)]">
+                  Weekly Quotas
+                </span>
                 <strong className="mt-1 block font-mono text-[22px] font-bold text-[var(--ink)]">
-                  {viewingReport.brokenDays}
+                  {viewingReport.weeklyQuotasPassed}/
+                  {viewingReport.weeklyQuotasPassed + viewingReport.weeklyQuotasMissed}
                 </strong>
               </div>
             </div>
