@@ -55,6 +55,24 @@
   --music-keyboard: #167587;
   --music-keyboard-fg: #ffffff;
 
+  /* Sleep accent: Calm Indigo-Slate */
+  --sleep: #535fa6;
+  --sleep-lite: #eef0fb;
+  --sleep-ink: #3c4682;
+  --sleep-btn-text: #ffffff;
+
+  /* Reading accent: Warm Ochre */
+  --reading: #9a6b2f;
+  --reading-lite: #f7f1e6;
+  --reading-ink: #724e1f;
+  --reading-btn-text: #ffffff;
+
+  /* Health & Discipline accent: Calm Forest Olive */
+  --health: #3f7a56;
+  --health-lite: #eaf4ee;
+  --health-ink: #2b593d;
+  --health-btn-text: #ffffff;
+
   /* Backward-compatible semantic aliases */
   --bg-app: var(--bg);
   --bg-canvas: var(--bg);
@@ -123,6 +141,24 @@ html.dark {
   --music-guitar-fg: #261c0d;
   --music-keyboard: #86cdda;
   --music-keyboard-fg: #0e2830;
+
+  /* Sleep accent: Soft Indigo-Slate */
+  --sleep: #9aa6e8;
+  --sleep-lite: #222538;
+  --sleep-ink: #cdd4f7;
+  --sleep-btn-text: #121424;
+
+  /* Reading accent: Soft Warm Ochre */
+  --reading: #dfb170;
+  --reading-lite: #2b241a;
+  --reading-ink: #f1d4a8;
+  --reading-btn-text: #1c160c;
+
+  /* Health & Discipline accent: Soft Forest Olive */
+  --health: #7fc29b;
+  --health-lite: #1c2921;
+  --health-ink: #bfe6cf;
+  --health-btn-text: #0f1a13;
 
   --bg-app: var(--bg);
   --bg-canvas: var(--bg);

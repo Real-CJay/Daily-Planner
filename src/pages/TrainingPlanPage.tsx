@@ -1,22 +1,25 @@
-﻿import { useCallback, useEffect, useMemo, useState } from 'react';
-import { Link } from 'react-router-dom';
+﻿import { useCallback, useEffect, useMemo, useState, type FormEvent } from 'react';
 import {
-  AlertTriangle,
-  ArrowRight,
   Check,
   Edit3,
-  Info,
+  Lock,
   Plus,
   ShieldAlert,
   Sparkles,
   Trash2,
+  X,
 } from 'lucide-react';
-import { CategoryMark } from '@/design-system';
+import { CATEGORY_COLORS, CATEGORY_SHORT_LABELS } from '@/design-system';
 import { getLocalDateString } from '@/lib/datetime';
 import { useAuth } from '@/modules/auth/AuthContext';
 import { listRunningSessions } from '@/modules/running/repository';
 import { formatDistanceKm } from '@/modules/running/calculations';
-import { listReadinessCheckIns, listScheduleBlocks } from '@/modules/calendar/repository';
+import {
+  createScheduleBlock,
+  listReadinessCheckIns,
+  listScheduleBlocks,
+  updateScheduleBlock,
+} from '@/modules/calendar/repository';
 import {
   ISO_WEEKDAYS,
   addDaysIso,
@@ -24,41 +27,43 @@ import {
   expandCalendarOccurrences,
   getIsoWeekday,
 } from '@/modules/calendar/scheduleEngine';
+import { ScheduleBlockModal } from '@/modules/calendar/ScheduleBlockModal';
 import {
   computeTrainingPaceZones,
-  detectPlanAdjustments,
-  evaluatePhaseReadiness,
-  formatPaceRange,
   generateRollingSevenDayPlan,
-  type ProposedAdjustment,
 } from '@/modules/plan/planEngine';
 import {
-  createPlanAdjustment,
   deletePlannedWorkout,
   listPlannedWorkouts,
-  updatePlannedWorkoutStatus,
   upsertPlannedWorkouts,
 } from '@/modules/plan/repository';
 import { PlannedWorkoutModal } from '@/modules/plan/PlannedWorkoutModal';
 import {
-  TRAINING_PHASE_LABELS,
-  WORKOUT_TYPE_LABELS,
+  createMonkModeSession,
+  evaluateMonkModeReport,
+  isCommitmentLocked,
+  loadDisciplineStore,
+  saveDisciplineStore,
+  type CommitmentTier,
+  type MonkModeReport,
+  type PlannerDisciplineStore,
+} from '@/modules/monk/monkEngine';
+import {
+  ACTIVITY_CATEGORY_LABELS,
+  type ActivityCategory,
   type PlannedWorkout,
   type PlannedWorkoutDraft,
-  type PlannedWorkoutStatus,
   type ReadinessCheckIn,
   type RunningSession,
   type ScheduleBlock,
 } from '@/types/domain';
 
+const MONK_PRESET_DAYS = [7, 14, 21, 30, 60, 90];
+
 function formatShortDate(iso: string): string {
   const [y, m, d] = iso.split('-').map(Number);
   const dt = new Date(Date.UTC(y, (m || 1) - 1, d || 1));
-  return dt.toLocaleDateString('en-US', {
-    month: 'short',
-    day: 'numeric',
-    timeZone: 'UTC',
-  });
+  return dt.toLocaleDateString('en-US', { month: 'short', day: 'numeric', timeZone: 'UTC' });
 }
 
 export function TrainingPlanPage() {
@@ -72,17 +77,38 @@ export function TrainingPlanPage() {
   const [blocks, setBlocks] = useState<ScheduleBlock[]>([]);
   const [checkIns, setCheckIns] = useState<ReadinessCheckIn[]>([]);
   const [plannedWorkouts, setPlannedWorkouts] = useState<PlannedWorkout[]>([]);
-  const [dismissedIds, setDismissedIds] = useState<string[]>([]);
+
+  // Non-Negotiables + Monk Mode store
+  const [discipline, setDiscipline] = useState<PlannerDisciplineStore>({
+    commitments: [],
+    completionsByDate: {},
+    activeMonk: null,
+    pastMonkSessions: [],
+  });
+  const [newCommitTitle, setNewCommitTitle] = useState('');
+  const [newCommitCategory, setNewCommitCategory] = useState<ActivityCategory>('VOCAL');
+  const [newCommitTier, setNewCommitTier] = useState<CommitmentTier>('NON_NEGOTIABLE');
+  const [newCommitMin, setNewCommitMin] = useState('30');
+
+  // Monk Mode Modals
+  const [showStartMonkModal, setShowStartMonkModal] = useState(false);
+  const [monkTitle, setMonkTitle] = useState('30-Day Monk Mode');
+  const [monkDays, setMonkDays] = useState(30);
+  const [showEndMonkModal, setShowEndMonkModal] = useState(false);
+  const [earlyExitReason, setEarlyExitReason] = useState('');
+  const [viewingReport, setViewingReport] = useState<MonkModeReport | null>(null);
+
+  // Activity & Run Modals
+  const [showRunModal, setShowRunModal] = useState(false);
+  const [editingWorkout, setEditingWorkout] = useState<PlannedWorkout | null>(null);
+  const [showBlockModal, setShowBlockModal] = useState(false);
+  const [editingBlock, setEditingBlock] = useState<ScheduleBlock | null>(null);
+  const [modalDefaultDate, setModalDefaultDate] = useState(today);
 
   const [loading, setLoading] = useState(true);
   const [generating, setGenerating] = useState(false);
-  const [actingId, setActingId] = useState<string | null>(null);
-  const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
-
-  const [showWorkoutModal, setShowWorkoutModal] = useState(false);
-  const [editingWorkout, setEditingWorkout] = useState<PlannedWorkout | null>(null);
-  const [modalDefaultDate, setModalDefaultDate] = useState(today);
+  const [error, setError] = useState<string | null>(null);
 
   const loadData = useCallback(async () => {
     if (!user) return;
@@ -99,8 +125,9 @@ export function TrainingPlanPage() {
       setBlocks(blockRows);
       setCheckIns(checkInRows);
       setPlannedWorkouts(planRows);
+      setDiscipline(loadDisciplineStore(user.id));
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to load training plan.');
+      setError(err instanceof Error ? err.message : 'Failed to load weekly planner.');
     } finally {
       setLoading(false);
     }
@@ -110,55 +137,171 @@ export function TrainingPlanPage() {
     void loadData();
   }, [loadData]);
 
+  function updateDiscipline(next: PlannerDisciplineStore) {
+    if (!user) return;
+    setDiscipline(next);
+    saveDisciplineStore(user.id, next);
+  }
+
   const activePhase = profile?.current_phase ?? 'REBUILDING';
   const preferredDays = profile?.preferred_run_days?.length
     ? profile.preferred_run_days
     : [1, 3, 5, 6];
-
   const paceZones = useMemo(() => computeTrainingPaceZones(sessions), [sessions]);
 
-  const phaseReport = useMemo(
-    () => evaluatePhaseReadiness(activePhase, sessions, checkIns, today),
-    [activePhase, sessions, checkIns, today]
+  const weekOccurrences = useMemo(
+    () => expandCalendarOccurrences(blocks, [], today, windowEnd),
+    [blocks, today, windowEnd]
   );
 
-  const nonRunningOccurrences = useMemo(() => {
-    return expandCalendarOccurrences(blocks, [], today, windowEnd).filter(
-      (o) => o.category !== 'RUNNING'
-    );
-  }, [blocks, today, windowEnd]);
+  const nonNegotiables = useMemo(
+    () => discipline.commitments.filter((c) => c.tier === 'NON_NEGOTIABLE'),
+    [discipline.commitments]
+  );
+  const negotiables = useMemo(
+    () => discipline.commitments.filter((c) => c.tier === 'NEGOTIABLE'),
+    [discipline.commitments]
+  );
 
-  const proposals = useMemo(() => {
-    const raw = detectPlanAdjustments({
-      today,
-      plannedWorkouts,
-      sessions,
-      blocks,
-      checkIns,
+  const activeMonkReport = useMemo(() => {
+    if (!discipline.activeMonk) return null;
+    return evaluateMonkModeReport(discipline.activeMonk, discipline.completionsByDate, today);
+  }, [discipline.activeMonk, discipline.completionsByDate, today]);
+
+  const todayDoneCommitIds = useMemo(
+    () => new Set(discipline.completionsByDate[today] ?? []),
+    [discipline.completionsByDate, today]
+  );
+
+  function toggleCommitmentToday(id: string) {
+    const set = new Set(discipline.completionsByDate[today] ?? []);
+    if (set.has(id)) set.delete(id);
+    else set.add(id);
+    updateDiscipline({
+      ...discipline,
+      completionsByDate: { ...discipline.completionsByDate, [today]: Array.from(set) },
     });
-    return raw.filter((p) => !dismissedIds.includes(p.id));
-  }, [today, plannedWorkouts, sessions, blocks, checkIns, dismissedIds]);
-
-  const activeWorkouts = useMemo(
-    () => plannedWorkouts.filter((w) => w.status !== 'SKIPPED'),
-    [plannedWorkouts]
-  );
-
-  const plannedTotalM = useMemo(
-    () => activeWorkouts.reduce((sum, w) => sum + w.target_distance_m, 0),
-    [activeWorkouts]
-  );
-
-  function openAddWorkout(dateIso: string) {
-    setEditingWorkout(null);
-    setModalDefaultDate(dateIso);
-    setShowWorkoutModal(true);
   }
 
-  function openEditWorkout(workout: PlannedWorkout) {
-    setEditingWorkout(workout);
-    setModalDefaultDate(workout.plan_date);
-    setShowWorkoutModal(true);
+  function handleAddCommitment(e: FormEvent) {
+    e.preventDefault();
+    if (!newCommitTitle.trim()) return;
+    if (discipline.activeMonk && newCommitTier === 'NON_NEGOTIABLE') {
+      setError('Non-Negotiables are locked while Monk Mode is active.');
+      return;
+    }
+    const item = {
+      id: `cm-${Date.now()}`,
+      title: newCommitTitle.trim(),
+      category: newCommitCategory,
+      tier: newCommitTier,
+      targetMinutes: newCommitMin.trim() ? Number(newCommitMin) : null,
+      createdAt: today,
+    };
+    updateDiscipline({ ...discipline, commitments: [...discipline.commitments, item] });
+    setNewCommitTitle('');
+    setError(null);
+  }
+
+  function handleRemoveCommitment(id: string) {
+    const target = discipline.commitments.find((c) => c.id === id);
+    if (!target) return;
+    if (isCommitmentLocked(target, discipline.activeMonk)) {
+      setError('Cannot remove a locked Non-Negotiable during Monk Mode.');
+      return;
+    }
+    updateDiscipline({
+      ...discipline,
+      commitments: discipline.commitments.filter((c) => c.id !== id),
+    });
+  }
+
+  function handleStartMonkMode(e: FormEvent) {
+    e.preventDefault();
+    if (nonNegotiables.length === 0) {
+      setError('Add at least one Non-Negotiable before starting Monk Mode.');
+      return;
+    }
+    const session = createMonkModeSession({
+      title: monkTitle,
+      startDate: today,
+      plannedDays: monkDays,
+      nonNegotiables,
+    });
+    updateDiscipline({ ...discipline, activeMonk: session });
+    setShowStartMonkModal(false);
+    setNotice(`Monk Mode activated for ${session.plannedDays} days. Non-Negotiables are now locked.`);
+  }
+
+  function handleCompleteOrEndMonkEarly(e: FormEvent) {
+    e.preventDefault();
+    if (!discipline.activeMonk) return;
+    if (!earlyExitReason.trim()) {
+      setError('You must state a reason to end Monk Mode early.');
+      return;
+    }
+    const ended = {
+      ...discipline.activeMonk,
+      status: 'ENDED_EARLY' as const,
+      endedAtDate: today,
+      earlyExitReason: earlyExitReason.trim(),
+    };
+    const report = evaluateMonkModeReport(ended, discipline.completionsByDate, today);
+    updateDiscipline({
+      ...discipline,
+      activeMonk: null,
+      pastMonkSessions: [ended, ...discipline.pastMonkSessions],
+    });
+    setEarlyExitReason('');
+    setShowEndMonkModal(false);
+    setViewingReport(report);
+  }
+
+  function handleFinishCompletedMonk() {
+    if (!discipline.activeMonk) return;
+    const finished = {
+      ...discipline.activeMonk,
+      status: 'COMPLETED' as const,
+      endedAtDate: discipline.activeMonk.endDate,
+    };
+    const report = evaluateMonkModeReport(finished, discipline.completionsByDate, today);
+    updateDiscipline({
+      ...discipline,
+      activeMonk: null,
+      pastMonkSessions: [finished, ...discipline.pastMonkSessions],
+    });
+    setViewingReport(report);
+  }
+
+  async function handleGenerateRunDraft() {
+    if (!user) return;
+    setGenerating(true);
+    setError(null);
+    setNotice(null);
+    try {
+      const drafts = generateRollingSevenDayPlan({
+        referenceDate: today,
+        profile: { current_phase: activePhase, preferred_run_days: preferredDays },
+        sessions,
+        blocks,
+        checkIns,
+      });
+      if (drafts.length === 0) {
+        setError('No eligible running days found in the next 7 days.');
+        return;
+      }
+      const completedDates = new Set(
+        plannedWorkouts.filter((w) => w.status === 'COMPLETED').map((w) => w.plan_date)
+      );
+      await upsertPlannedWorkouts(
+        user.id,
+        drafts.filter((d) => !completedDates.has(d.plan_date))
+      );
+      await loadData();
+      setNotice('Drafted adaptive running sessions for the next 7 days.');
+    } finally {
+      setGenerating(false);
+    }
   }
 
   async function handleSaveManualWorkout(
@@ -167,154 +310,67 @@ export function TrainingPlanPage() {
     previousDate?: string
   ) {
     if (!user) return;
-    setError(null);
-    setNotice(null);
     if (previousId && previousDate && previousDate !== draft.plan_date) {
       await deletePlannedWorkout(user.id, previousId);
     }
     await upsertPlannedWorkouts(user.id, [draft]);
     await loadData();
-    setNotice(
-      previousId
-        ? `Updated workout for ${formatShortDate(draft.plan_date)}.`
-        : `Added ${draft.title} on ${formatShortDate(draft.plan_date)}.`
-    );
   }
-
-  async function handleGeneratePlan() {
-    if (!user) return;
-    setGenerating(true);
-    setError(null);
-    setNotice(null);
-    try {
-      const drafts = generateRollingSevenDayPlan({
-        referenceDate: today,
-        profile: {
-          current_phase: activePhase,
-          preferred_run_days: preferredDays,
-        },
-        sessions,
-        blocks,
-        checkIns,
-      });
-
-      if (drafts.length === 0) {
-        setError('No eligible running days found in the next 7 days.');
-        return;
-      }
-
-      const completedDates = new Set(
-        plannedWorkouts.filter((w) => w.status === 'COMPLETED').map((w) => w.plan_date)
-      );
-      const toSave = drafts.filter((d) => !completedDates.has(d.plan_date));
-
-      await upsertPlannedWorkouts(user.id, toSave);
-      setDismissedIds([]);
-      await loadData();
-      setNotice(`Drafted ${toSave.length} session(s) for the next 7 days.`);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Unable to generate training plan.');
-    } finally {
-      setGenerating(false);
-    }
-  }
-
-  async function handleAcceptAdjustment(proposal: ProposedAdjustment) {
-    if (!user) return;
-    setActingId(proposal.id);
-    try {
-      await upsertPlannedWorkouts(user.id, [proposal.updatedDraft]);
-      await createPlanAdjustment(user.id, {
-        adjustment_date: proposal.planDate,
-        trigger_code: proposal.triggerCode,
-        trigger_reason: proposal.triggerReason,
-        previous_summary: proposal.previousSummary,
-        proposed_summary: proposal.proposedSummary,
-        decision: 'ACCEPTED',
-      });
-      await loadData();
-      setNotice(`Applied adjustment for ${formatShortDate(proposal.planDate)}.`);
-    } finally {
-      setActingId(null);
-    }
-  }
-
-  async function handleDismissAdjustment(proposal: ProposedAdjustment) {
-    if (!user) return;
-    setActingId(proposal.id);
-    try {
-      await createPlanAdjustment(user.id, {
-        adjustment_date: proposal.planDate,
-        trigger_code: proposal.triggerCode,
-        trigger_reason: proposal.triggerReason,
-        previous_summary: proposal.previousSummary,
-        proposed_summary: proposal.proposedSummary,
-        decision: 'DISMISSED',
-      });
-      setDismissedIds((prev) => [...prev, proposal.id]);
-      await loadData();
-    } finally {
-      setActingId(null);
-    }
-  }
-
-  async function handleStatusChange(workout: PlannedWorkout, nextStatus: PlannedWorkoutStatus) {
-    if (!user) return;
-    setActingId(workout.id);
-    try {
-      await updatePlannedWorkoutStatus(user.id, workout.id, nextStatus);
-      await loadData();
-    } finally {
-      setActingId(null);
-    }
-  }
-
-  async function handleRemoveWorkout(workout: PlannedWorkout) {
-    if (!user) return;
-    if (!window.confirm(`Remove planned workout on ${workout.plan_date}?`)) return;
-    setActingId(workout.id);
-    try {
-      await deletePlannedWorkout(user.id, workout.id);
-      await loadData();
-    } finally {
-      setActingId(null);
-    }
-  }
-
-  const phaseParts = TRAINING_PHASE_LABELS[activePhase].split(' — ');
-  const metCount = phaseReport.criteria.filter((c) => c.met).length;
-  const progressPct =
-    phaseReport.criteria.length > 0
-      ? Math.round((metCount / phaseReport.criteria.length) * 100)
-      : 0;
 
   return (
     <div className="space-y-7 pb-6">
-      {/* Studio Header (Common Default Stride Blue) */}
+      {/* Studio Header */}
       <header className="flex flex-col justify-between gap-4 sm:flex-row sm:items-end">
-        <div>
-          <h1 className="text-[34px] font-bold leading-[1.08] tracking-[-0.055em] text-[var(--ink)] sm:text-[42px]">
-            Plan your <em className="not-italic text-[var(--blue)]">week.</em>
-          </h1>
-        </div>
+        <h1 className="text-[34px] font-bold leading-[1.08] tracking-[-0.055em] text-[var(--ink)] sm:text-[42px]">
+          Plan your <em className="not-italic text-[var(--blue)]">week.</em>
+        </h1>
 
         <div className="flex flex-wrap items-center gap-2">
+          {!discipline.activeMonk ? (
+            <button
+              type="button"
+              onClick={() => setShowStartMonkModal(true)}
+              className="inline-flex h-10 items-center gap-2 rounded-[9px] border border-[var(--line-strong)] bg-[var(--surface)] px-3.5 text-[12.5px] font-bold text-[var(--ink)] transition-colors hover:border-[var(--blue)] hover:text-[var(--blue)]"
+            >
+              <Lock className="h-3.5 w-3.5" />
+              <span>Start Monk Mode</span>
+            </button>
+          ) : (
+            <button
+              type="button"
+              onClick={() => {
+                if (activeMonkReport) setViewingReport(activeMonkReport);
+              }}
+              className="inline-flex h-10 items-center gap-2 rounded-[9px] border border-[var(--blue)]/40 bg-[var(--blue-lite)] px-3.5 text-[12.5px] font-bold text-[var(--blue-ink)]"
+            >
+              <Lock className="h-3.5 w-3.5" />
+              <span>
+                Monk Mode · {activeMonkReport?.finalScore.toFixed(2)}×
+              </span>
+            </button>
+          )}
+
           <button
             type="button"
             disabled={generating}
-            onClick={() => void handleGeneratePlan()}
-            className="inline-flex h-10 items-center justify-center gap-2 rounded-[9px] border border-[var(--blue)]/35 bg-[var(--blue-lite)] px-4 text-[12.5px] font-bold text-[var(--blue-ink)] transition-opacity hover:opacity-90 disabled:opacity-50"
+            onClick={() => void handleGenerateRunDraft()}
+            className="inline-flex h-10 items-center gap-1.5 rounded-[9px] border border-[var(--line-strong)] bg-[var(--surface)] px-3.5 text-[12.5px] font-semibold text-[var(--ink)] hover:bg-[var(--surface-2)] disabled:opacity-50"
           >
-            <Sparkles className="h-3.5 w-3.5" />
-            <span>{generating ? 'Drafting...' : 'Draft a week'}</span>
+            <Sparkles className="h-3.5 w-3.5 text-[var(--blue)]" />
+            <span>{generating ? 'Drafting...' : 'Draft runs'}</span>
           </button>
+
           <button
             type="button"
-            onClick={() => openAddWorkout(today)}
-            className="inline-flex h-10 items-center justify-center gap-2 rounded-[9px] bg-[var(--blue)] px-4 text-[12.5px] font-bold text-[var(--blue-btn-text)] transition-opacity hover:opacity-90 active:translate-y-px"
+            onClick={() => {
+              setEditingBlock(null);
+              setModalDefaultDate(today);
+              setShowBlockModal(true);
+            }}
+            className="inline-flex h-10 items-center gap-1.5 rounded-[9px] bg-[var(--blue)] px-4 text-[12.5px] font-bold text-[var(--blue-btn-text)] transition-opacity hover:opacity-90"
           >
             <Plus className="h-4 w-4 stroke-[2.4]" />
-            <span>Add a run</span>
+            <span>Plan activity</span>
           </button>
         </div>
       </header>
@@ -324,357 +380,655 @@ export function TrainingPlanPage() {
           {notice}
         </div>
       )}
-
       {error && (
         <div className="rounded-xl border border-red-400/40 bg-red-500/10 px-4 py-2.5 text-xs font-semibold text-red-700 dark:text-red-300">
           {error}
         </div>
       )}
 
-      {/* Clean 3-Column Metric Strip */}
-      <div className="grid grid-cols-1 divide-y divide-[var(--line)] rounded-[15px] border border-[var(--line)] bg-[var(--surface)] sm:grid-cols-3 sm:divide-x sm:divide-y-0">
-        <div className="px-6 py-5">
-          <span className="text-[10px] font-bold uppercase tracking-[0.11em] text-[var(--muted)]">
-            SCHEDULED RUNNING
-          </span>
-          <div className="mt-2 font-mono text-[32px] font-bold leading-none tracking-[-0.06em] text-[var(--blue)] tabular-nums">
-            {loading ? '—' : (plannedTotalM / 1000).toFixed(1)}
-            <small className="ml-1.5 font-sans text-[14px] font-medium text-[var(--muted)]">
-              km
-            </small>
-          </div>
-          <span className="mt-1.5 block text-[11.5px] text-[var(--muted)]">
-            {activeWorkouts.length} planned {activeWorkouts.length === 1 ? 'session' : 'sessions'}
-          </span>
-        </div>
-
-        <div className="px-6 py-5">
-          <span className="text-[10px] font-bold uppercase tracking-[0.11em] text-[var(--muted)]">
-            CURRENT PHASE
-          </span>
-          <div className="mt-2 font-mono text-[32px] font-bold leading-none tracking-[-0.06em] text-[var(--ink)]">
-            {phaseParts[0].replace('Phase ', '0')}
-          </div>
-          <span className="mt-1.5 block text-[11.5px] text-[var(--muted)]">
-            {phaseParts[1] ?? activePhase}
-          </span>
-        </div>
-
-        <div className="px-6 py-5">
-          <span className="text-[10px] font-bold uppercase tracking-[0.11em] text-[var(--muted)]">
-            EASY PACE ZONE
-          </span>
-          <div className="mt-2 font-mono text-[26px] font-bold leading-tight tracking-[-0.05em] text-[var(--ink)] tabular-nums">
-            {paceZones.easy
-              ? formatPaceRange(paceZones.easy.minSecPerKm, paceZones.easy.maxSecPerKm)
-              : 'RPE 3–4'}
-          </div>
-          <span className="mt-1 block text-[11.5px] text-[var(--muted)]">
-            Safe cap: {phaseReport.targetWeeklyKm.toFixed(1)} km / wk
-          </span>
-        </div>
-      </div>
-
-      {/* Proposed Adaptive Adjustments (shown only when triggered) */}
-      {proposals.length > 0 && (
-        <div className="space-y-2.5">
-          {proposals.map((prop) => (
-            <section
-              key={prop.id}
-              className="flex flex-col justify-between gap-3 rounded-[15px] border border-[var(--line-strong)] bg-[var(--surface)] p-5 lg:flex-row lg:items-center"
-            >
-              <div className="space-y-1">
-                <div className="flex items-center gap-2 text-[13px] font-bold text-[var(--ink)]">
-                  {prop.severity === 'HIGH' ? (
-                    <ShieldAlert className="h-4 w-4 text-red-600 dark:text-red-400" />
-                  ) : (
-                    <AlertTriangle className="h-4 w-4 text-amber-600 dark:text-amber-300" />
-                  )}
-                  <span>Suggested adjustment for {formatShortDate(prop.planDate)}</span>
-                </div>
-                <p className="text-[12px] text-[var(--muted)]">
-                  {prop.triggerReason} —{' '}
-                  <span className="line-through">{prop.previousSummary}</span> →{' '}
-                  <strong className="text-[var(--ink)]">{prop.proposedSummary}</strong>
-                </p>
+      {/* Active Monk Mode Status Strip */}
+      {discipline.activeMonk && activeMonkReport && (
+        <section
+          className="rounded-[15px] border border-[var(--blue)]/35 p-5 sm:p-6"
+          style={{ background: 'color-mix(in srgb, var(--blue) 6%, var(--surface))' }}
+        >
+          <div className="flex flex-col justify-between gap-4 lg:flex-row lg:items-center">
+            <div className="space-y-1">
+              <div className="flex flex-wrap items-center gap-2">
+                <span className="inline-flex items-center gap-1.5 rounded-md bg-[var(--blue)] px-2 py-0.5 font-mono text-[10px] font-bold uppercase text-[var(--blue-btn-text)]">
+                  <Lock className="h-3 w-3" />
+                  MONK MODE ACTIVE
+                </span>
+                <strong className="text-[16px] font-bold text-[var(--ink)]">
+                  {discipline.activeMonk.title}
+                </strong>
+                <span className="font-mono text-[11.5px] text-[var(--muted)]">
+                  {formatShortDate(discipline.activeMonk.startDate)} →{' '}
+                  {formatShortDate(discipline.activeMonk.endDate)}
+                </span>
               </div>
-              <div className="flex shrink-0 items-center gap-2">
+              <p className="text-[12.5px] text-[var(--muted)]">
+                Day {activeMonkReport.elapsedDays} of {activeMonkReport.plannedDays} ·{' '}
+                <strong className="text-[var(--ink)]">
+                  {activeMonkReport.finalScore.toFixed(3)}×
+                </strong>{' '}
+                compounding score (1.01/0.99 curve) · {activeMonkReport.brokenDays} break(s)
+              </p>
+            </div>
+
+            <div className="flex flex-wrap items-center gap-2">
+              {today >= discipline.activeMonk.endDate ? (
                 <button
                   type="button"
-                  disabled={actingId === prop.id}
-                  onClick={() => void handleDismissAdjustment(prop)}
-                  className="h-9 rounded-[8px] border border-[var(--line-strong)] bg-[var(--surface)] px-3 text-[12px] font-semibold text-[var(--ink)] hover:bg-[var(--surface-2)]"
+                  onClick={handleFinishCompletedMonk}
+                  className="h-9 rounded-[8px] bg-[var(--blue)] px-4 text-[12px] font-bold text-[var(--blue-btn-text)]"
                 >
-                  Dismiss
+                  Finish &amp; View Report
                 </button>
+              ) : (
                 <button
                   type="button"
-                  disabled={actingId === prop.id}
-                  onClick={() => void handleAcceptAdjustment(prop)}
-                  className="h-9 rounded-[8px] bg-[var(--blue)] px-3.5 text-[12px] font-bold text-[var(--blue-btn-text)] hover:opacity-90"
+                  onClick={() => setShowEndMonkModal(true)}
+                  className="h-9 rounded-[8px] border border-red-400/40 bg-red-500/10 px-3.5 text-[12px] font-bold text-red-700 hover:bg-red-500/20 dark:text-red-300"
                 >
-                  Accept
+                  End early (penalty)
                 </button>
-              </div>
-            </section>
-          ))}
-        </div>
+              )}
+            </div>
+          </div>
+        </section>
       )}
 
-      {/* Clean 7-Day Schedule Builder */}
+      {/* Non-Negotiables vs. Negotiables Section */}
+      <div className="grid gap-5 lg:grid-cols-2">
+        {/* Non-Negotiables */}
+        <section className="rounded-[15px] border border-[var(--line)] bg-[var(--surface)] p-6">
+          <div className="flex items-center justify-between gap-2">
+            <div>
+              <div className="flex items-center gap-2">
+                <h2 className="text-[19px] font-bold tracking-[-0.04em] text-[var(--ink)]">
+                  Non-Negotiables
+                </h2>
+                {discipline.activeMonk && (
+                  <span className="inline-flex items-center gap-1 rounded bg-[var(--blue-lite)] px-2 py-0.5 font-mono text-[10px] font-bold text-[var(--blue-ink)]">
+                    <Lock className="h-3 w-3" />
+                    LOCKED
+                  </span>
+                )}
+              </div>
+              <p className="mt-0.5 text-[12px] text-[var(--muted)]">
+                Fixed daily standards. Every full day compounds by ×1.01.
+              </p>
+            </div>
+          </div>
+
+          <div className="mt-4 divide-y divide-[var(--line)] border-t border-[var(--line)]">
+            {nonNegotiables.length === 0 ? (
+              <p className="py-6 text-xs text-[var(--muted)]">
+                No Non-Negotiables set yet. Add one below (e.g., 30 min Vocal every day).
+              </p>
+            ) : (
+              nonNegotiables.map((item) => {
+                const done = todayDoneCommitIds.has(item.id);
+                const locked = isCommitmentLocked(item, discipline.activeMonk);
+                return (
+                  <div key={item.id} className="flex items-center gap-3 py-3">
+                    <button
+                      type="button"
+                      onClick={() => toggleCommitmentToday(item.id)}
+                      className={`grid h-5 w-5 shrink-0 place-items-center rounded-[6px] border-2 transition-colors ${
+                        done
+                          ? 'border-[var(--blue)] bg-[var(--blue)] text-[var(--blue-btn-text)]'
+                          : 'border-[var(--line-strong)] bg-[var(--surface)] text-transparent hover:border-[var(--blue)]'
+                      }`}
+                    >
+                      <Check className="h-3.5 w-3.5 stroke-[2.8]" />
+                    </button>
+                    <div className="min-w-0 flex-1">
+                      <strong
+                        className={`block truncate text-[13px] font-bold ${
+                          done ? 'text-[var(--faint)] line-through' : 'text-[var(--ink)]'
+                        }`}
+                      >
+                        {item.title}
+                      </strong>
+                      <span className="text-[11px] text-[var(--muted)]">
+                        {CATEGORY_SHORT_LABELS[item.category]}
+                        {item.targetMinutes ? ` · ${item.targetMinutes}m daily` : ' · Daily'}
+                      </span>
+                    </div>
+                    {locked ? (
+                      <Lock className="h-3.5 w-3.5 shrink-0 text-[var(--faint)]" />
+                    ) : (
+                      <button
+                        type="button"
+                        onClick={() => handleRemoveCommitment(item.id)}
+                        aria-label={`Remove ${item.title}`}
+                        className="rounded p-1.5 text-[var(--faint)] hover:bg-red-500/10 hover:text-red-600"
+                      >
+                        <Trash2 className="h-3.5 w-3.5" />
+                      </button>
+                    )}
+                  </div>
+                );
+              })
+            )}
+          </div>
+        </section>
+
+        {/* Negotiables + Add Form */}
+        <section className="flex flex-col justify-between rounded-[15px] border border-[var(--line)] bg-[var(--surface)] p-6">
+          <div>
+            <h2 className="text-[19px] font-bold tracking-[-0.04em] text-[var(--ink)]">
+              Negotiables
+            </h2>
+            <p className="mt-0.5 text-[12px] text-[var(--muted)]">
+              Flexible targets you can skip occasionally without breaking Monk Mode.
+            </p>
+
+            <div className="mt-4 divide-y divide-[var(--line)] border-t border-[var(--line)]">
+              {negotiables.length === 0 ? (
+                <p className="py-5 text-xs text-[var(--muted)]">
+                  No flexible negotiables added yet.
+                </p>
+              ) : (
+                negotiables.map((item) => {
+                  const done = todayDoneCommitIds.has(item.id);
+                  return (
+                    <div key={item.id} className="flex items-center gap-3 py-3">
+                      <button
+                        type="button"
+                        onClick={() => toggleCommitmentToday(item.id)}
+                        className={`grid h-5 w-5 shrink-0 place-items-center rounded-[6px] border-2 transition-colors ${
+                          done
+                            ? 'border-[var(--blue)] bg-[var(--blue)] text-[var(--blue-btn-text)]'
+                            : 'border-[var(--line-strong)] bg-[var(--surface)] text-transparent hover:border-[var(--blue)]'
+                        }`}
+                      >
+                        <Check className="h-3.5 w-3.5 stroke-[2.8]" />
+                      </button>
+                      <div className="min-w-0 flex-1">
+                        <strong
+                          className={`block truncate text-[13px] font-bold ${
+                            done ? 'text-[var(--faint)] line-through' : 'text-[var(--ink)]'
+                          }`}
+                        >
+                          {item.title}
+                        </strong>
+                        <span className="text-[11px] text-[var(--muted)]">
+                          {CATEGORY_SHORT_LABELS[item.category]}
+                          {item.targetMinutes ? ` · ${item.targetMinutes}m` : ''}
+                        </span>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => handleRemoveCommitment(item.id)}
+                        aria-label={`Remove ${item.title}`}
+                        className="rounded p-1.5 text-[var(--faint)] hover:bg-red-500/10 hover:text-red-600"
+                      >
+                        <Trash2 className="h-3.5 w-3.5" />
+                      </button>
+                    </div>
+                  );
+                })
+              )}
+            </div>
+          </div>
+
+          <form
+            onSubmit={handleAddCommitment}
+            className="mt-4 flex flex-wrap items-center gap-2 border-t border-[var(--line)] pt-4"
+          >
+            <input
+              type="text"
+              value={newCommitTitle}
+              onChange={(e) => setNewCommitTitle(e.target.value)}
+              placeholder="Add commitment (e.g. 30m Vocal, Read 20p)..."
+              className="min-w-[160px] flex-1 rounded-[8px] border border-[var(--line-strong)] bg-[var(--input-bg)] px-3 py-1.5 text-[12px] text-[var(--ink)] placeholder:text-[var(--faint)] focus:border-[var(--blue)] focus:outline-none"
+            />
+            <select
+              value={newCommitTier}
+              onChange={(e) => setNewCommitTier(e.target.value as CommitmentTier)}
+              className="rounded-[8px] border border-[var(--line-strong)] bg-[var(--input-bg)] px-2 py-1.5 text-[11.5px] font-semibold text-[var(--ink)]"
+            >
+              <option value="NON_NEGOTIABLE" disabled={Boolean(discipline.activeMonk)}>
+                Non-Negotiable
+              </option>
+              <option value="NEGOTIABLE">Negotiable</option>
+            </select>
+            <select
+              value={newCommitCategory}
+              onChange={(e) => setNewCommitCategory(e.target.value as ActivityCategory)}
+              className="rounded-[8px] border border-[var(--line-strong)] bg-[var(--input-bg)] px-2 py-1.5 text-[11.5px] text-[var(--ink)]"
+            >
+              {Object.entries(ACTIVITY_CATEGORY_LABELS).map(([k, label]) => (
+                <option key={k} value={k}>
+                  {label}
+                </option>
+              ))}
+            </select>
+            <input
+              type="number"
+              min={5}
+              max={240}
+              value={newCommitMin}
+              onChange={(e) => setNewCommitMin(e.target.value)}
+              placeholder="min"
+              className="w-16 rounded-[8px] border border-[var(--line-strong)] bg-[var(--input-bg)] px-2 py-1.5 font-mono text-[11.5px] text-[var(--ink)]"
+            />
+            <button
+              type="submit"
+              className="inline-flex h-8 items-center gap-1 rounded-[8px] bg-[var(--blue)] px-3 text-[11.5px] font-bold text-[var(--blue-btn-text)]"
+            >
+              <Plus className="h-3.5 w-3.5" />
+              <span>Add</span>
+            </button>
+          </form>
+        </section>
+      </div>
+
+      {/* All-Activity 7-Day Weekly Planner Board */}
       <section className="overflow-hidden rounded-[15px] border border-[var(--line)] bg-[var(--surface)]">
         <div className="flex flex-wrap items-center justify-between gap-2 px-6 py-5">
           <div>
-            <h2 className="text-[19px] font-bold tracking-[-0.04em] text-[var(--ink)]">
-              Your week
+            <h2 className="text-[20px] font-bold tracking-[-0.04em] text-[var(--ink)]">
+              7-day schedule
             </h2>
             <p className="mt-0.5 text-[12px] text-[var(--muted)]">
-              {formatShortDate(today)} – {formatShortDate(windowEnd)}
+              {formatShortDate(today)} – {formatShortDate(windowEnd)} · Runs, Karate, Music, Study &amp; Health
             </p>
           </div>
-          <span className="text-[11.5px] text-[var(--muted)]">
-            All entries are planned, not recorded.
-          </span>
+          <button
+            type="button"
+            onClick={() => {
+              setEditingWorkout(null);
+              setModalDefaultDate(today);
+              setShowRunModal(true);
+            }}
+            className="text-[12px] font-semibold text-[var(--blue)] hover:underline"
+          >
+            + Add running workout
+          </button>
         </div>
 
-        <div className="grid grid-cols-1 divide-y divide-[var(--line)] border-t border-[var(--line)] md:grid-cols-7 md:divide-x md:divide-y-0">
-          {rollingDates.map((date) => {
-            const iso = getIsoWeekday(date);
-            const weekdayLabel = ISO_WEEKDAYS.find((d) => d.iso === iso)?.short ?? '';
-            const workout = plannedWorkouts.find((w) => w.plan_date === date) ?? null;
-            const karateCount = nonRunningOccurrences.filter(
-              (o) => o.date === date && o.category === 'KARATE'
-            ).length;
-            const otherCount = nonRunningOccurrences.filter(
-              (o) => o.date === date && o.category !== 'KARATE'
-            ).length;
-            const isToday = date === today;
+        {loading ? (
+          <div className="border-t border-[var(--line)] py-12 text-center text-sm text-[var(--muted)]">
+            Loading 7-day planner...
+          </div>
+        ) : (
+          <div className="grid grid-cols-1 divide-y divide-[var(--line)] border-t border-[var(--line)] md:grid-cols-7 md:divide-x md:divide-y-0">
+            {rollingDates.map((date) => {
+              const iso = getIsoWeekday(date);
+              const weekdayLabel = ISO_WEEKDAYS.find((d) => d.iso === iso)?.short ?? '';
+              const workout = plannedWorkouts.find((w) => w.plan_date === date) ?? null;
+              const dayBlocks = weekOccurrences.filter((o) => o.date === date);
+              const isToday = date === today;
 
-            return (
-              <div
-                key={date}
-                style={
-                  isToday
-                    ? { background: 'color-mix(in srgb, var(--blue) 4%, var(--surface))' }
-                    : undefined
-                }
-                className="flex min-h-[200px] flex-col p-3.5"
-              >
-                <button
-                  type="button"
-                  onClick={() => (workout ? openEditWorkout(workout) : openAddWorkout(date))}
-                  className="flex w-full items-center justify-between border-b border-[var(--line)] pb-2.5 text-left"
+              return (
+                <div
+                  key={date}
+                  style={
+                    isToday
+                      ? { background: 'color-mix(in srgb, var(--blue) 4%, var(--surface))' }
+                      : undefined
+                  }
+                  className="flex min-h-[220px] flex-col p-3.5"
                 >
-                  <span className="text-[10.5px] font-bold uppercase tracking-[0.06em] text-[var(--muted)]">
-                    {weekdayLabel}
-                  </span>
-                  <b
-                    className={`font-mono text-[14px] ${
-                      isToday ? 'text-[var(--blue)]' : 'text-[var(--ink)]'
-                    }`}
-                  >
-                    {Number(date.slice(8))}
-                  </b>
-                </button>
+                  <div className="flex items-center justify-between border-b border-[var(--line)] pb-2.5">
+                    <span className="text-[10.5px] font-bold uppercase tracking-[0.06em] text-[var(--muted)]">
+                      {weekdayLabel}
+                    </span>
+                    <b
+                      className={`font-mono text-[14px] ${
+                        isToday ? 'text-[var(--blue)]' : 'text-[var(--ink)]'
+                      }`}
+                    >
+                      {Number(date.slice(8))}
+                    </b>
+                  </div>
 
-                <div className="flex flex-1 flex-col justify-between gap-3 pt-3.5">
-                  {workout ? (
-                    <div className="space-y-1.5">
-                      <span className="block h-1 w-8 rounded-full bg-[var(--blue)]" />
-                      <strong
-                        className={`block text-[12px] font-bold leading-snug text-[var(--ink)] ${
-                          workout.status === 'COMPLETED' ? 'line-through opacity-60' : ''
-                        }`}
+                  <div className="flex flex-1 flex-col gap-2 pt-3">
+                    {workout && (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setEditingWorkout(workout);
+                          setModalDefaultDate(workout.plan_date);
+                          setShowRunModal(true);
+                        }}
+                        className="rounded-lg border border-[var(--blue)]/30 bg-[var(--blue-lite)]/65 p-2 text-left transition-colors hover:border-[var(--blue)]"
                       >
-                        {workout.title}
-                      </strong>
-                      <small className="block font-mono text-[10.5px] text-[var(--muted)]">
-                        {formatDistanceKm(workout.target_distance_m)} ·{' '}
-                        {workout.status.toLowerCase()}
-                      </small>
-                    </div>
-                  ) : (
-                    <div className="my-auto text-center text-[11.5px] text-[var(--faint)]">
-                      Open day
-                    </div>
-                  )}
-
-                  <div className="space-y-2">
-                    {(karateCount > 0 || otherCount > 0) && (
-                      <div className="flex items-center gap-1.5 text-[10px] text-[var(--muted)]">
-                        <span
-                          className="h-1.5 w-1.5 shrink-0 rounded-full"
-                          style={{
-                            backgroundColor:
-                              karateCount > 0 ? 'var(--karate)' : 'var(--line-strong)',
-                          }}
-                        />
-                        <span className="truncate">
-                          {karateCount > 0
-                            ? `${karateCount} karate`
-                            : `${otherCount} other`}
-                        </span>
-                      </div>
+                        <div className="truncate text-[11.5px] font-bold text-[var(--ink)]">
+                          {workout.title}
+                        </div>
+                        <div className="font-mono text-[10px] text-[var(--blue-ink)]">
+                          {formatDistanceKm(workout.target_distance_m)}
+                        </div>
+                      </button>
                     )}
 
-                    <button
-                      type="button"
-                      onClick={() => (workout ? openEditWorkout(workout) : openAddWorkout(date))}
-                      className="w-full rounded-[7px] border border-[var(--blue)]/30 bg-[var(--blue-lite)]/65 py-1.5 text-[10.5px] font-bold text-[var(--blue-ink)] transition-colors hover:bg-[var(--blue)] hover:text-[var(--blue-btn-text)]"
-                    >
-                      {workout ? 'Edit workout' : '+ Plan run'}
-                    </button>
+                    {dayBlocks.slice(0, 4).map((occ) => (
+                      <button
+                        key={occ.occurrenceKey}
+                        type="button"
+                        onClick={() => {
+                          const found = blocks.find((b) => b.id === occ.sourceId) ?? null;
+                          setEditingBlock(found);
+                          setModalDefaultDate(date);
+                          setShowBlockModal(true);
+                        }}
+                        className="flex items-center gap-1.5 rounded-lg border border-[var(--line)] bg-[var(--bg)] px-2 py-1.5 text-left transition-colors hover:border-[var(--line-strong)]"
+                      >
+                        <span
+                          className="h-2 w-2 shrink-0 rounded-full"
+                          style={{ backgroundColor: CATEGORY_COLORS[occ.category] }}
+                        />
+                        <span className="truncate text-[11px] font-semibold text-[var(--ink)]">
+                          {occ.title}
+                        </span>
+                      </button>
+                    ))}
+
+                    {!workout && dayBlocks.length === 0 && (
+                      <span className="my-auto text-center text-[11px] text-[var(--faint)]">
+                        Open day
+                      </span>
+                    )}
                   </div>
+
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setEditingBlock(null);
+                      setModalDefaultDate(date);
+                      setShowBlockModal(true);
+                    }}
+                    className="mt-3 w-full rounded-[7px] border border-[var(--blue)]/25 bg-[var(--blue-lite)]/55 py-1.5 text-[10.5px] font-bold text-[var(--blue-ink)] transition-colors hover:bg-[var(--blue)] hover:text-[var(--blue-btn-text)]"
+                  >
+                    + Plan
+                  </button>
                 </div>
-              </div>
-            );
-          })}
-        </div>
+              );
+            })}
+          </div>
+        )}
       </section>
 
-      {/* Clean Lower 2-Column Section */}
-      <div className="grid items-start gap-4 lg:grid-cols-[minmax(0,1.1fr)_minmax(290px,0.9fr)]">
-        {/* Planned Workouts List */}
+      {/* Past Monk Mode Reports */}
+      {discipline.pastMonkSessions.length > 0 && (
         <section className="rounded-[15px] border border-[var(--line)] bg-[var(--surface)] p-6">
           <h2 className="text-[19px] font-bold tracking-[-0.04em] text-[var(--ink)]">
-            Planned workouts
+            Past Monk Mode reports
           </h2>
-
-          {plannedWorkouts.length === 0 ? (
-            <div className="mt-4 flex min-h-[150px] flex-col items-center justify-center border-t border-[var(--line)] px-4 py-6 text-center">
-              <div className="mb-3 flex h-8 items-end gap-1 -rotate-12" aria-hidden="true">
-                <span className="h-3.5 w-2 rounded bg-[var(--line-strong)]" />
-                <span className="h-6 w-2 rounded bg-[var(--blue)]" />
-                <span className="h-4.5 w-2 rounded bg-[var(--line-strong)]" />
-              </div>
-              <h3 className="text-[15px] font-bold text-[var(--ink)]">No runs scheduled.</h3>
-              <p className="mt-1 text-[12px] text-[var(--muted)]">
-                Use a day above to add your first planned workout.
-              </p>
-            </div>
-          ) : (
-            <div className="mt-4 divide-y divide-[var(--line)] border-t border-[var(--line)]">
-              {plannedWorkouts.map((w) => (
-                <div key={w.id} className="flex items-center gap-3 py-3.5">
-                  <CategoryMark category="RUNNING" size="sm" />
-                  <div className="min-w-0 flex-1">
-                    <strong
-                      className={`block truncate text-[13px] font-bold text-[var(--ink)] ${
-                        w.status === 'COMPLETED' ? 'line-through opacity-55' : ''
-                      }`}
-                    >
-                      {w.title}
-                    </strong>
-                    <span className="mt-0.5 block truncate text-[11.5px] text-[var(--muted)]">
-                      {formatShortDate(w.plan_date)} · {WORKOUT_TYPE_LABELS[w.workout_type]} ·{' '}
-                      {w.status.toLowerCase()}
-                    </span>
+          <div className="mt-4 divide-y divide-[var(--line)] border-t border-[var(--line)]">
+            {discipline.pastMonkSessions.map((s) => {
+              const rep = evaluateMonkModeReport(s, discipline.completionsByDate, today);
+              return (
+                <div key={s.id} className="flex flex-wrap items-center justify-between gap-3 py-3.5">
+                  <div>
+                    <strong className="text-[13.5px] font-bold text-[var(--ink)]">{s.title}</strong>
+                    <div className="mt-0.5 text-[11.5px] text-[var(--muted)]">
+                      {formatShortDate(s.startDate)} → {formatShortDate(s.endedAtDate ?? s.endDate)} ·{' '}
+                      {rep.compliancePct}% compliance · {rep.brokenDays} break(s)
+                      {s.status === 'ENDED_EARLY' ? ' · Ended early' : ' · Completed'}
+                    </div>
                   </div>
-                  <span className="shrink-0 font-mono text-[12.5px] font-bold text-[var(--ink)] tabular-nums">
-                    {formatDistanceKm(w.target_distance_m)}
-                  </span>
-                  <div className="flex shrink-0 items-center gap-1">
+                  <div className="flex items-center gap-3">
+                    <span className="font-mono text-[14px] font-bold text-[var(--blue)]">
+                      {rep.finalScore.toFixed(3)}×
+                    </span>
                     <button
                       type="button"
-                      disabled={actingId === w.id}
-                      onClick={() =>
-                        void handleStatusChange(
-                          w,
-                          w.status === 'COMPLETED' ? 'PLANNED' : 'COMPLETED'
-                        )
-                      }
-                      aria-label={w.status === 'COMPLETED' ? 'Undo completion' : 'Mark done'}
-                      className={`grid h-8 w-8 place-items-center rounded-[8px] border transition-colors ${
-                        w.status === 'COMPLETED'
-                          ? 'border-[var(--blue)] bg-[var(--blue)] text-[var(--blue-btn-text)]'
-                          : 'border-[var(--line)] text-[var(--muted)] hover:bg-[var(--surface-2)] hover:text-[var(--ink)]'
-                      }`}
+                      onClick={() => setViewingReport(rep)}
+                      className="inline-flex h-8 items-center gap-1 rounded-[8px] border border-[var(--line)] px-3 text-[11.5px] font-semibold text-[var(--ink)] hover:bg-[var(--surface-2)]"
                     >
-                      <Check className="h-3.5 w-3.5" />
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => openEditWorkout(w)}
-                      aria-label={`Edit ${w.title}`}
-                      className="grid h-8 w-8 place-items-center rounded-[8px] border border-[var(--line)] text-[var(--muted)] hover:bg-[var(--surface-2)] hover:text-[var(--ink)]"
-                    >
-                      <Edit3 className="h-3.5 w-3.5" />
-                    </button>
-                    <button
-                      type="button"
-                      disabled={actingId === w.id}
-                      onClick={() => void handleRemoveWorkout(w)}
-                      aria-label={`Delete ${w.title}`}
-                      className="grid h-8 w-8 place-items-center rounded-[8px] border border-[var(--line)] text-[var(--muted)] hover:bg-red-500/10 hover:text-red-600 dark:hover:text-red-400"
-                    >
-                      <Trash2 className="h-3.5 w-3.5" />
+                      <Edit3 className="h-3 w-3" />
+                      <span>Report</span>
                     </button>
                   </div>
                 </div>
-              ))}
-            </div>
-          )}
+              );
+            })}
+          </div>
         </section>
+      )}
 
-        {/* Quiet Phase Readiness Panel */}
-        <aside className="rounded-[15px] border border-[var(--line)] bg-[var(--surface)] p-6">
-          <h2 className="text-[19px] font-bold tracking-[-0.04em] text-[var(--ink)]">
-            {phaseParts[1] ?? 'Rebuilding phase'}
-          </h2>
-          <p className="mt-1 text-[12px] text-[var(--muted)]">
-            Only increase load when your recent training supports it.
-          </p>
-
-          <div className="my-4 h-[5px] w-full overflow-hidden rounded-full bg-[var(--surface-3)]">
-            <span
-              style={{ width: `${progressPct}%` }}
-              className="block h-full rounded-full bg-[var(--blue)]"
-            />
-          </div>
-
-          <div className="divide-y divide-[var(--line)] border-t border-[var(--line)]">
-            {phaseReport.criteria.map((c, idx) => (
-              <div key={idx} className="flex items-center gap-2.5 py-3 text-[12px] text-[var(--muted)]">
-                <span
-                  className={`h-2 w-2 shrink-0 rounded-full border ${
-                    c.met
-                      ? 'border-[#4F846E] bg-[#4F846E]'
-                      : 'border-[var(--line-strong)] bg-[var(--surface-3)]'
-                  }`}
+      {/* Start Monk Mode Modal */}
+      {showStartMonkModal && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/55 p-4 backdrop-blur-[2px]"
+          onMouseDown={(e) => {
+            if (e.target === e.currentTarget) setShowStartMonkModal(false);
+          }}
+        >
+          <div className="w-full max-w-[460px] rounded-2xl border border-[var(--line)] bg-[var(--surface)] p-6 text-[var(--ink)] shadow-2xl">
+            <div className="flex items-center justify-between border-b border-[var(--line)] pb-3.5">
+              <h2 className="text-[20px] font-bold tracking-[-0.04em]">Activate Monk Mode</h2>
+              <button
+                type="button"
+                onClick={() => setShowStartMonkModal(false)}
+                className="grid h-8 w-8 place-items-center rounded-lg text-[var(--muted)] hover:bg-[var(--surface-2)]"
+              >
+                <X className="h-4 w-4" />
+              </button>
+            </div>
+            <form onSubmit={handleStartMonkMode} className="mt-4 space-y-4">
+              <label className="block text-[12px] font-semibold text-[var(--muted)]">
+                Sprint name
+                <input
+                  type="text"
+                  value={monkTitle}
+                  onChange={(e) => setMonkTitle(e.target.value)}
+                  className="mt-1.5 block w-full rounded-[9px] border border-[var(--line-strong)] bg-[var(--input-bg)] px-3 py-2 text-[13px] text-[var(--ink)]"
                 />
-                <span>{c.label}</span>
+              </label>
+              <div>
+                <span className="block text-[12px] font-semibold text-[var(--muted)]">
+                  Duration (days)
+                </span>
+                <div className="mt-2 flex flex-wrap gap-1.5">
+                  {MONK_PRESET_DAYS.map((d) => (
+                    <button
+                      key={d}
+                      type="button"
+                      onClick={() => {
+                        setMonkDays(d);
+                        setMonkTitle(`${d}-Day Monk Mode`);
+                      }}
+                      className={`rounded-lg border px-3 py-1.5 font-mono text-[12px] font-bold ${
+                        monkDays === d
+                          ? 'border-[var(--blue)] bg-[var(--blue-lite)] text-[var(--blue-ink)]'
+                          : 'border-[var(--line)] bg-[var(--bg)] text-[var(--muted)]'
+                      }`}
+                    >
+                      {d}d
+                    </button>
+                  ))}
+                </div>
               </div>
-            ))}
+              <div className="rounded-xl border border-[var(--line)] bg-[var(--bg)] p-3.5 text-[12px] text-[var(--muted)]">
+                <strong className="block text-[var(--ink)]">
+                  Locking {nonNegotiables.length} Non-Negotiable(s):
+                </strong>
+                <ul className="mt-1.5 list-disc space-y-1 pl-4">
+                  {nonNegotiables.map((c) => (
+                    <li key={c.id}>{c.title}</li>
+                  ))}
+                </ul>
+              </div>
+              <div className="flex justify-end gap-2 border-t border-[var(--line)] pt-4">
+                <button
+                  type="button"
+                  onClick={() => setShowStartMonkModal(false)}
+                  className="h-9 rounded-[9px] border border-[var(--line-strong)] px-4 text-[12.5px] font-semibold"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  className="inline-flex h-9 items-center gap-1.5 rounded-[9px] bg-[var(--blue)] px-4 text-[12.5px] font-bold text-[var(--blue-btn-text)]"
+                >
+                  <Lock className="h-3.5 w-3.5" />
+                  <span>Lock &amp; Start</span>
+                </button>
+              </div>
+            </form>
           </div>
+        </div>
+      )}
 
-          <div className="mt-4 flex items-center justify-between border-t border-[var(--line)] pt-4">
-            <Link
-              to="/runs"
-              className="inline-flex items-center gap-1.5 text-[12px] font-semibold text-[var(--blue)] hover:underline"
-            >
-              <span>Open running journal</span>
-              <ArrowRight className="h-3.5 w-3.5" />
-            </Link>
+      {/* End Monk Mode Early Modal (Requires Reason + Shows Penalty) */}
+      {showEndMonkModal && activeMonkReport && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/55 p-4 backdrop-blur-[2px]"
+          onMouseDown={(e) => {
+            if (e.target === e.currentTarget) setShowEndMonkModal(false);
+          }}
+        >
+          <div className="w-full max-w-[460px] rounded-2xl border border-[var(--line)] bg-[var(--surface)] p-6 text-[var(--ink)] shadow-2xl">
+            <div className="flex items-center gap-2 text-red-600 dark:text-red-400">
+              <ShieldAlert className="h-5 w-5" />
+              <h2 className="text-[19px] font-bold">End Monk Mode early?</h2>
+            </div>
+            <p className="mt-2 text-[12.5px] leading-relaxed text-[var(--muted)]">
+              You still have <strong className="text-[var(--ink)]">{activeMonkReport.remainingDays} days</strong> left.
+              Ending early records your reason permanently in the report and applies a proportional
+              score penalty.
+            </p>
+            <form onSubmit={handleCompleteOrEndMonkEarly} className="mt-4 space-y-4">
+              <label className="block text-[12px] font-semibold text-[var(--muted)]">
+                State your honest reason *
+                <textarea
+                  rows={3}
+                  required
+                  value={earlyExitReason}
+                  onChange={(e) => setEarlyExitReason(e.target.value)}
+                  placeholder="Why are you ending Monk Mode before the target date?"
+                  className="mt-1.5 block w-full rounded-[9px] border border-[var(--line-strong)] bg-[var(--input-bg)] p-3 text-[13px] text-[var(--ink)]"
+                />
+              </label>
+              <div className="flex justify-end gap-2 border-t border-[var(--line)] pt-4">
+                <button
+                  type="button"
+                  onClick={() => setShowEndMonkModal(false)}
+                  className="h-9 rounded-[9px] border border-[var(--line-strong)] px-4 text-[12.5px] font-semibold"
+                >
+                  Stay locked in
+                </button>
+                <button
+                  type="submit"
+                  className="h-9 rounded-[9px] bg-red-600 px-4 text-[12.5px] font-bold text-white hover:bg-red-700"
+                >
+                  End with penalty
+                </button>
+              </div>
+            </form>
           </div>
-        </aside>
-      </div>
+        </div>
+      )}
 
-      <div className="flex items-start gap-2.5 px-1 text-[11.5px] leading-relaxed text-[var(--muted)]">
-        <Info className="mt-0.5 h-4 w-4 shrink-0" />
-        <p>
-          A planned run is not a completed run. Log finished runs in your Running journal so
-          mileage, pace zones, and phase readiness stay grounded in recorded data.
-        </p>
-      </div>
+      {/* Monk Mode Report Modal */}
+      {viewingReport && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/55 p-4 backdrop-blur-[2px]"
+          onMouseDown={(e) => {
+            if (e.target === e.currentTarget) setViewingReport(null);
+          }}
+        >
+          <div className="w-full max-w-[520px] rounded-2xl border border-[var(--line)] bg-[var(--surface)] p-6 text-[var(--ink)] shadow-2xl">
+            <div className="flex items-center justify-between border-b border-[var(--line)] pb-3.5">
+              <div>
+                <div className="text-[10px] font-bold uppercase tracking-[0.12em] text-[var(--faint)]">
+                  MONK MODE REPORT
+                </div>
+                <h2 className="mt-0.5 text-[21px] font-bold tracking-[-0.04em]">
+                  {viewingReport.title}
+                </h2>
+              </div>
+              <button
+                type="button"
+                onClick={() => setViewingReport(null)}
+                className="grid h-8 w-8 place-items-center rounded-lg text-[var(--muted)] hover:bg-[var(--surface-2)]"
+              >
+                <X className="h-4 w-4" />
+              </button>
+            </div>
 
-      {showWorkoutModal && user && (
+            <div className="mt-4 grid grid-cols-3 divide-x divide-[var(--line)] rounded-xl border border-[var(--line)] bg-[var(--bg)] py-4 text-center">
+              <div>
+                <span className="text-[10px] font-bold uppercase text-[var(--muted)]">Score</span>
+                <strong className="mt-1 block font-mono text-[22px] font-bold text-[var(--blue)]">
+                  {viewingReport.finalScore.toFixed(3)}×
+                </strong>
+              </div>
+              <div>
+                <span className="text-[10px] font-bold uppercase text-[var(--muted)]">
+                  Compliance
+                </span>
+                <strong className="mt-1 block font-mono text-[22px] font-bold text-[var(--ink)]">
+                  {viewingReport.compliancePct}%
+                </strong>
+              </div>
+              <div>
+                <span className="text-[10px] font-bold uppercase text-[var(--muted)]">Breaks</span>
+                <strong className="mt-1 block font-mono text-[22px] font-bold text-[var(--ink)]">
+                  {viewingReport.brokenDays}
+                </strong>
+              </div>
+            </div>
+
+            {viewingReport.earlyExitPenalty > 0 && (
+              <div className="mt-4 rounded-xl border border-red-400/40 bg-red-500/10 p-3.5 text-[12px] text-red-700 dark:text-red-300">
+                <strong>Early Exit Penalty: −{viewingReport.earlyExitPenalty.toFixed(3)}×</strong>{' '}
+                ({viewingReport.remainingDays} of {viewingReport.plannedDays} days left).
+                {viewingReport.earlyExitReason && (
+                  <p className="mt-1 italic">&ldquo;{viewingReport.earlyExitReason}&rdquo;</p>
+                )}
+              </div>
+            )}
+
+            <div className="mt-5 flex justify-end">
+              <button
+                type="button"
+                onClick={() => setViewingReport(null)}
+                className="h-9 rounded-[9px] bg-[var(--blue)] px-4 text-[12.5px] font-bold text-[var(--blue-btn-text)]"
+              >
+                Close report
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Plan Any Activity Modal */}
+      {showBlockModal && user && (
+        <ScheduleBlockModal
+          initialBlock={editingBlock}
+          defaultDate={modalDefaultDate}
+          onClose={() => {
+            setShowBlockModal(false);
+            setEditingBlock(null);
+          }}
+          onSave={async (draft) => {
+            if (editingBlock) {
+              await updateScheduleBlock(user.id, editingBlock.id, draft);
+            } else {
+              await createScheduleBlock(user.id, draft);
+            }
+            await loadData();
+          }}
+        />
+      )}
+
+      {/* Plan / Edit Running Workout Modal */}
+      {showRunModal && user && (
         <PlannedWorkoutModal
           initialWorkout={editingWorkout}
           defaultDate={modalDefaultDate}
           activePhase={activePhase}
           paceZones={paceZones}
           onClose={() => {
-            setShowWorkoutModal(false);
+            setShowRunModal(false);
             setEditingWorkout(null);
           }}
           onSave={handleSaveManualWorkout}

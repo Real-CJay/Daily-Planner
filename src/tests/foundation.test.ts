@@ -15,16 +15,20 @@ describe('Stage 1 Foundation Utilities', () => {
     expect(formatDurationSeconds(3930)).toBe('1:05:30');
   });
 
-  it('exposes all 11 required top-level navigation routes', () => {
-    expect(NAV_ITEMS).toHaveLength(11);
+  it('exposes all 15 required top-level navigation routes', () => {
+    expect(NAV_ITEMS).toHaveLength(15);
     const paths = NAV_ITEMS.map((i) => i.to);
     expect(paths).toEqual([
       '/',
+      '/calendar',
+      '/plan',
+      '/modes',
       '/runs',
       '/karate',
       '/music',
-      '/plan',
-      '/calendar',
+      '/sleep',
+      '/reading',
+      '/health',
       '/analytics',
       '/coach',
       '/personal-bests',

@@ -7,6 +7,10 @@ import { OverviewPage } from '@/pages/OverviewPage';
 import { RunningLogPage } from '@/pages/RunningLogPage';
 import { KaratePage } from '@/pages/KaratePage';
 import { MusicPage } from '@/pages/MusicPage';
+import { ModesPage } from '@/pages/ModesPage';
+import { SleepPage } from '@/pages/SleepPage';
+import { ReadingPage } from '@/pages/ReadingPage';
+import { HealthPage } from '@/pages/HealthPage';
 import { RunDetailPage } from '@/pages/RunDetailPage';
 import { CalendarPage } from '@/pages/CalendarPage';
 import { AnalyticsPage } from '@/pages/AnalyticsPage';
@@ -39,6 +43,10 @@ function AuthenticatedWorkspace() {
         <Route path="/runs/:id" element={<RunDetailPage />} />
         <Route path="/karate" element={<KaratePage />} />
         <Route path="/music" element={<MusicPage />} />
+        <Route path="/modes" element={<ModesPage />} />
+        <Route path="/sleep" element={<SleepPage />} />
+        <Route path="/reading" element={<ReadingPage />} />
+        <Route path="/health" element={<HealthPage />} />
         <Route path="/calendar" element={<CalendarPage />} />
         <Route path="/analytics" element={<AnalyticsPage />} />
         <Route path="/personal-bests" element={<PersonalBestsPage />} />

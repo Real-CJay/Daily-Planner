@@ -4,15 +4,18 @@ import {
   Activity,
   Award,
   BarChart3,
+  BookOpen,
   Bot,
   CalendarDays,
   ChevronDown,
   ClipboardCheck,
   Flame,
-  Music,
+  HeartPulse,
   LayoutDashboard,
+  Layers,
   LogOut,
   Moon,
+  Music,
   Route,
   Settings,
   Sun,
@@ -30,16 +33,20 @@ export interface NavItem {
   label: string;
   shortLabel: string;
   icon: LucideIcon;
-  section: 'primary' | 'secondary';
+  section: 'primary' | 'mode' | 'secondary';
 }
 
 export const NAV_ITEMS: NavItem[] = [
   { to: '/', label: 'Overview', shortLabel: 'Overview', icon: LayoutDashboard, section: 'primary' },
-  { to: '/runs', label: 'Running', shortLabel: 'Running', icon: Route, section: 'primary' },
-  { to: '/karate', label: 'Karate', shortLabel: 'Karate', icon: Flame, section: 'primary' },
-  { to: '/music', label: 'Music', shortLabel: 'Music', icon: Music, section: 'primary' },
-  { to: '/plan', label: 'Training Plan', shortLabel: 'Plan', icon: ClipboardCheck, section: 'secondary' },
   { to: '/calendar', label: 'Calendar', shortLabel: 'Calendar', icon: CalendarDays, section: 'primary' },
+  { to: '/plan', label: 'Plan', shortLabel: 'Plan', icon: ClipboardCheck, section: 'primary' },
+  { to: '/modes', label: 'Modes', shortLabel: 'Modes', icon: Layers, section: 'primary' },
+  { to: '/runs', label: 'Running', shortLabel: 'Running', icon: Route, section: 'mode' },
+  { to: '/karate', label: 'Karate', shortLabel: 'Karate', icon: Flame, section: 'mode' },
+  { to: '/music', label: 'Music', shortLabel: 'Music', icon: Music, section: 'mode' },
+  { to: '/sleep', label: 'Sleep', shortLabel: 'Sleep', icon: Moon, section: 'mode' },
+  { to: '/reading', label: 'Reading', shortLabel: 'Reading', icon: BookOpen, section: 'mode' },
+  { to: '/health', label: 'Health', shortLabel: 'Health', icon: HeartPulse, section: 'mode' },
   { to: '/analytics', label: 'Analytics', shortLabel: 'Analytics', icon: BarChart3, section: 'secondary' },
   { to: '/coach', label: 'Coach', shortLabel: 'Coach', icon: Bot, section: 'secondary' },
   { to: '/personal-bests', label: 'Personal Bests', shortLabel: 'PBs', icon: Award, section: 'secondary' },
@@ -47,7 +54,7 @@ export const NAV_ITEMS: NavItem[] = [
   { to: '/settings', label: 'Settings', shortLabel: 'Settings', icon: Settings, section: 'secondary' },
 ];
 
-const PRIMARY_ORDER = ['/', '/calendar', '/runs', '/karate', '/music'];
+const PRIMARY_ORDER = ['/', '/calendar', '/plan', '/modes'];
 
 export function AppShell({ children }: { children: ReactNode }) {
   const { pathname } = useLocation();
@@ -56,7 +63,10 @@ export function AppShell({ children }: { children: ReactNode }) {
   const [moreOpen, setMoreOpen] = useState(false);
   const [profileOpen, setProfileOpen] = useState(false);
 
-  const primaryNav = PRIMARY_ORDER.map((path) => NAV_ITEMS.find((i) => i.to === path)).filter((i): i is NavItem => Boolean(i));
+  const primaryNav = PRIMARY_ORDER.map((path) => NAV_ITEMS.find((i) => i.to === path)).filter(
+    (i): i is NavItem => Boolean(i)
+  );
+  const modeNav = NAV_ITEMS.filter((i) => i.section === 'mode');
   const secondaryNav = NAV_ITEMS.filter((i) => i.section === 'secondary');
 
   const tz = profile?.timezone ?? 'Asia/Colombo';
@@ -68,13 +78,14 @@ export function AppShell({ children }: { children: ReactNode }) {
     return to === '/' ? pathname === '/' : pathname.startsWith(to);
   }
 
+  const isModeActive = isActive('/modes') || modeNav.some((item) => isActive(item.to));
   const isSecondaryActive = secondaryNav.some((item) => isActive(item.to));
   const isCalendar = pathname.startsWith('/calendar');
   const isCoach = pathname.startsWith('/coach');
 
   return (
     <div className="min-h-screen bg-[var(--bg)] text-[var(--ink)]">
-      {/* Stride Sticky Top Navigation Bar */}
+      {/* Stride Sticky Top Navigation Bar (76px Studio height) */}
       <header className="sticky top-0 z-30 h-[76px] border-b border-[var(--line)] bg-[var(--surface)]">
         <div className="relative mx-auto flex h-full max-w-[1250px] items-center justify-between px-5 sm:px-8">
           <div className="flex h-full items-center gap-10 lg:gap-16">
@@ -86,10 +97,10 @@ export function AppShell({ children }: { children: ReactNode }) {
               <StrideBrand />
             </Link>
 
-            {/* Primary 4 Destinations + More Dropdown (Desktop) */}
-            <nav aria-label="Main navigation" className="hidden h-full items-center gap-7 md:flex">
+            {/* Primary 4 Tabs (Overview, Calendar, Plan, Modes) + More */}
+            <nav aria-label="Main navigation" className="hidden h-full items-center gap-8 md:flex">
               {primaryNav.map((item) => {
-                const active = isActive(item.to);
+                const active = item.to === '/modes' ? isModeActive : isActive(item.to);
                 return (
                   <Link
                     key={item.to}
@@ -207,7 +218,6 @@ export function AppShell({ children }: { children: ReactNode }) {
                       {tz} · {TRAINING_PHASE_LABELS[activePhase]}
                     </div>
 
-                    {/* Quick access to secondary pages on mobile */}
                     <div className="mt-3 space-y-0.5 border-t border-[var(--line)] pt-2.5 md:hidden">
                       {secondaryNav.map((item) => {
                         const Icon = item.icon;
@@ -254,31 +264,30 @@ export function AppShell({ children }: { children: ReactNode }) {
         </div>
       </header>
 
-      {/* Main Content: Viewport-Locked for Calendar, Editorial Container for Other Pages */}
+      {/* Main Content: Viewport-Locked ONLY for Calendar & Coach; Spacious Studio Padding for Others */}
       <main
         className={
           isCalendar
             ? 'flex h-[calc(100vh-76px)] w-full flex-col overflow-hidden pb-[72px] md:pb-0'
             : isCoach
               ? 'mx-auto flex h-[calc(100vh-76px)] w-full max-w-[1248px] flex-col overflow-hidden px-4 pb-[76px] pt-3 sm:px-6 md:pb-4'
-              : 'mx-auto min-h-[calc(100vh-76px)] w-full max-w-[1248px] px-4 pb-24 pt-4 sm:px-6 md:pb-6'
+              : 'mx-auto min-h-[calc(100vh-76px)] w-full max-w-[1248px] px-5 pb-28 pt-10 sm:px-8 sm:pt-12 md:pb-16'
         }
       >
         {children}
       </main>
 
-      {/* Persistent Bottom-Right AI Coach Launcher & Chatbox */}
       <SessionReminderManager />
       <FloatingCoachWidget />
 
-      {/* Stride Mobile Bottom Navigation (4 Primary Tabs) */}
+      {/* Mobile Bottom Navigation (4 Primary Tabs) */}
       <nav
         aria-label="Mobile navigation"
-        className="fixed inset-x-0 bottom-0 z-30 grid h-[72px] grid-cols-5 border-t border-[var(--line)] bg-[var(--surface)] px-3 py-2 md:hidden"
+        className="fixed inset-x-0 bottom-0 z-30 grid h-[72px] grid-cols-4 border-t border-[var(--line)] bg-[var(--surface)] px-3 py-2 md:hidden"
       >
         {primaryNav.map((item) => {
           const Icon = item.icon;
-          const active = isActive(item.to);
+          const active = item.to === '/modes' ? isModeActive : isActive(item.to);
           return (
             <Link
               key={item.to}
