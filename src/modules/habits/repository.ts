@@ -52,3 +52,22 @@ export async function toggleHabitLog(
   );
   if (error) throw new Error(error.message);
 }
+
+export async function markHabitFailed(
+  userId: string,
+  habitKey: string,
+  logDate: string
+): Promise<void> {
+  if (!supabase) throw new Error('Supabase client is not configured.');
+
+  const { error } = await supabase.from('habit_logs').upsert(
+    {
+      user_id: userId,
+      habit_key: habitKey,
+      log_date: logDate,
+      completed: false,
+    },
+    { onConflict: 'user_id,habit_key,log_date' }
+  );
+  if (error) throw new Error(error.message);
+}

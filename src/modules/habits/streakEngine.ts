@@ -13,11 +13,12 @@ export function calculateHabitStreak(
   );
 
   const checkedToday = completedDates.has(todayIso);
+  const failedToday = logs.some((l) => l.habit_key === habitKey && l.log_date === todayIso && !l.completed);
 
   // Current streak: counts backwards from today (or yesterday if today isn't ticked yet)
   let currentStreak = 0;
-  let cursor = checkedToday ? todayIso : addDaysIso(todayIso, -1);
-  while (completedDates.has(cursor)) {
+  let cursor = failedToday ? '' : checkedToday ? todayIso : addDaysIso(todayIso, -1);
+  while (cursor && completedDates.has(cursor)) {
     currentStreak++;
     cursor = addDaysIso(cursor, -1);
   }

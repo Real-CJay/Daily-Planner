@@ -43,8 +43,9 @@ import {
 } from '@/modules/calendar/scheduleEngine';
 import { getWeekDatesIso } from '@/modules/calendar/timelineEngine';
 import { PracticeDurationModal } from '@/modules/calendar/PracticeDurationModal';
-import { listHabitLogs, toggleHabitLog } from '@/modules/habits/repository';
+import { listHabitLogs, toggleHabitLog, markHabitFailed } from '@/modules/habits/repository';
 import { calculateHabitStreak, PORN_FREE_HABIT_KEY } from '@/modules/habits/streakEngine';
+import { HabitHistoryModal } from '@/modules/habits/HabitHistoryModal';
 
 const WORKOUT_CATEGORIES: ActivityCategory[] = [
   'RUNNING',
@@ -136,7 +137,8 @@ export function OverviewPage() {
   const [habitLogs, setHabitLogs] = useState<HabitLog[]>([]);
   const [loading, setLoading] = useState(true);
 
-  const [togglingHabit, setTogglingHabit] = useState(false);
+  const [togglingHabitDate, setTogglingHabitDate] = useState<string | null>(null);
+  const [showHabitHistory, setShowHabitHistory] = useState(false);
   const [busyCompletionId, setBusyCompletionId] = useState<string | null>(null);
   const [selectedSplit, setSelectedSplit] = useState<StrengthFocus>('UPPER');
   const [loggingSplit, setLoggingSplit] = useState(false);
@@ -191,16 +193,41 @@ export function OverviewPage() {
     [habitLogs, today]
   );
 
-  async function handleTogglePornFree() {
-    if (!user || togglingHabit) return;
-    setTogglingHabit(true);
-    const nextValue = !pornFree.checkedToday;
+  const habitCompletedSet = useMemo(
+    () => new Set(habitLogs.filter((l) => l.completed).map((l) => l.log_date)),
+    [habitLogs]
+  );
+
+  const habitFailedSet = useMemo(
+    () => new Set(habitLogs.filter((l) => !l.completed).map((l) => l.log_date)),
+    [habitLogs]
+  );
+
+  const failedPornFreeToday = habitFailedSet.has(today);
+
+  async function handleFailPornFree() {
+    if (!user || togglingHabitDate) return;
+    if (!window.confirm('Mark today as failed and reset your Porn-Free streak to 0?')) return;
+    setTogglingHabitDate(today);
     try {
-      await toggleHabitLog(user.id, PORN_FREE_HABIT_KEY, today, nextValue);
+      await markHabitFailed(user.id, PORN_FREE_HABIT_KEY, today);
       const updated = await listHabitLogs(user.id, PORN_FREE_HABIT_KEY);
       setHabitLogs(updated);
     } finally {
-      setTogglingHabit(false);
+      setTogglingHabitDate(null);
+    }
+  }
+
+  async function handleTogglePornFreeDate(dateIso: string) {
+    if (!user || togglingHabitDate || dateIso > today || habitFailedSet.has(dateIso)) return;
+    setTogglingHabitDate(dateIso);
+    const nextValue = !habitCompletedSet.has(dateIso);
+    try {
+      await toggleHabitLog(user.id, PORN_FREE_HABIT_KEY, dateIso, nextValue);
+      const updated = await listHabitLogs(user.id, PORN_FREE_HABIT_KEY);
+      setHabitLogs(updated);
+    } finally {
+      setTogglingHabitDate(null);
     }
   }
 
@@ -447,7 +474,7 @@ export function OverviewPage() {
                 <span className="h-1.5 w-1.5 rounded-full bg-[#e4ad42]" />
                 01 / PORN-FREE STREAK
               </span>
-              <span
+              <div className="flex items-center gap-2"><button type="button" onClick={() => setShowHabitHistory(true)} className="rounded-lg border border-[var(--line)] bg-[var(--bg)] px-2.5 py-1 text-[11px] font-semibold text-[var(--muted)] transition-colors hover:border-[var(--line-strong)] hover:text-[var(--ink)]">Past days</button><span
                 className="grid h-[30px] w-[30px] place-items-center rounded-[10px] border text-[#b98529]"
                 style={{
                   background: 'color-mix(in srgb, #eac566 17%, var(--surface))',
@@ -455,7 +482,7 @@ export function OverviewPage() {
                 }}
               >
                 <Sparkles className="h-4 w-4" />
-              </span>
+              </span></div>
             </div>
 
             <div className="flex flex-1 items-center justify-between gap-4 py-2">
@@ -486,34 +513,91 @@ export function OverviewPage() {
               </div>
             </div>
 
+                        {/* Quick Clickable 7-Day Strip (Fix Past Days / Accidental Clicks) */}
+            <div className="mb-3 grid grid-cols-7 gap-1.5">
+              {pornFree.weekStatus.map((day, idx) => {
+                const isFuture = day.date > today;
+                const isToday = day.date === today;
+                const isFailed = habitFailedSet.has(day.date);
+                return (
+                  <button
+                    key={day.date}
+                    type="button"
+                    disabled={isFuture || isFailed || togglingHabitDate === day.date}
+                    onClick={() => void handleTogglePornFreeDate(day.date)}
+                    title={
+                      isFuture
+                        ? day.date
+                        : isFailed
+                          ? `${day.date} — Failed (locked)`
+                          : `${day.date} — ${day.completed ? 'Checked (tap to undo)' : 'Tap to check in'}`
+                    }
+                    className={`flex flex-col items-center gap-1 rounded-lg border py-1.5 text-[10px] font-semibold transition-colors ${
+                      isFuture
+                        ? 'cursor-not-allowed border-transparent text-[var(--faint)] opacity-40'
+                        : isFailed
+                          ? 'cursor-not-allowed border-red-400/50 bg-red-500/12 text-red-700 dark:text-red-300'
+                          : day.completed
+                            ? 'border-[#e4ad42]/55 bg-[#e4ad42]/16 text-[var(--ink)] hover:bg-[#e4ad42]/26'
+                            : isToday
+                              ? 'border-[var(--blue)]/50 bg-[var(--blue-lite)]/50 text-[var(--blue-ink)]'
+                              : 'border-[var(--line)] bg-[var(--bg)] text-[var(--muted)] hover:border-[var(--line-strong)] hover:text-[var(--ink)]'
+                    }`}
+                  >
+                    <span>{DAY_SHORT[idx].slice(0, 1)}</span>
+                    <span className="font-mono text-[10px] font-bold">
+                      {isFailed ? '×' : day.completed ? '✓' : Number(day.date.slice(8))}
+                    </span>
+                  </button>
+                );
+              })}
+            </div>
+
             <div className="mt-auto flex items-center justify-between gap-3 border-t border-[var(--line)] pt-3">
               <span className="inline-flex items-center gap-2 text-[12px] text-[var(--muted)]">
                 <span
                   className={`h-[7px] w-[7px] rounded-full ${
-                    pornFree.checkedToday ? 'bg-[#4e9c78]' : 'bg-[#d4a348]'
+                    failedPornFreeToday ? 'bg-red-500' : pornFree.checkedToday ? 'bg-[#4e9c78]' : 'bg-[#d4a348]'
                   }`}
                 />
-                {pornFree.checkedToday ? 'Checked in today' : 'Today’s check-in pending'}
+                {pornFree.checkedToday ? 'Checked in today' : failedPornFreeToday ? 'Streak reset today' : "Today's check-in pending"}
               </span>
-              <Button
-                type="button"
-                variant={pornFree.checkedToday ? 'secondary' : 'primary'}
-                disabled={togglingHabit}
-                onClick={() => void handleTogglePornFree()}
-                className="!min-h-[36px] !px-3.5 !py-1.5 !text-[12px]"
-              >
-                {pornFree.checkedToday ? (
-                  <>
-                    <X className="h-3.5 w-3.5" />
-                    <span>Undo</span>
-                  </>
-                ) : (
-                  <>
-                    <Check className="h-3.5 w-3.5" />
-                    <span>{togglingHabit ? 'Saving...' : 'Check in'}</span>
-                  </>
-                )}
-              </Button>
+              {failedPornFreeToday ? (
+                <span className="inline-flex h-[36px] items-center gap-1.5 rounded-[9px] border border-red-400/35 bg-red-500/10 px-3 text-[12px] font-bold text-red-700 dark:text-red-300">
+                  <X className="h-3.5 w-3.5" />
+                  <span>Failed today</span>
+                </span>
+              ) : (
+                <div className="flex items-center gap-2">
+                  <button
+                    type="button"
+                    disabled={togglingHabitDate === today}
+                    onClick={() => void handleFailPornFree()}
+                    className="inline-flex h-[36px] items-center justify-center rounded-[9px] border border-red-400/40 bg-red-500/10 px-3 text-[12px] font-bold text-red-700 transition-colors hover:bg-red-500/20 disabled:opacity-50 dark:text-red-300"
+                  >
+                    I Failed
+                  </button>
+                  <Button
+                    type="button"
+                    variant={pornFree.checkedToday ? 'secondary' : 'primary'}
+                    disabled={togglingHabitDate === today}
+                    onClick={() => void handleTogglePornFreeDate(today)}
+                    className="!min-h-[36px] !px-3.5 !py-1.5 !text-[12px]"
+                  >
+                    {pornFree.checkedToday ? (
+                      <>
+                        <X className="h-3.5 w-3.5" />
+                        <span>Undo</span>
+                      </>
+                    ) : (
+                      <>
+                        <Check className="h-3.5 w-3.5" />
+                        <span>{togglingHabitDate === today ? 'Saving...' : 'Check in'}</span>
+                      </>
+                    )}
+                  </Button>
+                </div>
+              )}
             </div>
           </article>
 
@@ -890,6 +974,21 @@ export function OverviewPage() {
               : undefined
           }
           onClose={() => setPracticeOcc(null)}
+        />
+      )}
+
+      {/* Past Days Habit History Modal */}
+      {showHabitHistory && (
+        <HabitHistoryModal
+          title="Porn-Free Streak History"
+          todayIso={today}
+          completedDates={habitCompletedSet}
+          failedDates={habitFailedSet}
+          currentStreak={pornFree.currentStreak}
+          bestStreak={pornFree.bestStreak}
+          busyDate={togglingHabitDate}
+          onToggleDate={handleTogglePornFreeDate}
+          onClose={() => setShowHabitHistory(false)}
         />
       )}
 
