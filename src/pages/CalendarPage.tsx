@@ -1,22 +1,14 @@
-﻿import { useCallback, useEffect, useMemo, useState } from 'react';
-import { Link } from 'react-router-dom';
-import {
-  CalendarDays,
-  ChevronLeft,
-  ChevronRight,
-  Filter,
-  HeartPulse,
-  Inbox,
-  Plus,
-  Sparkles,
-  Trash2,
-  X,
-} from 'lucide-react';
-import { CATEGORY_COLORS, CATEGORY_SHORT_LABELS, CategoryDot, CategoryMark, EmptyState } from '@/design-system';
-import { getLocalDateString } from '@/lib/datetime';
-import { supabase } from '@/lib/supabase';
+﻿import { useCallback, useEffect, useMemo, useState, type MouseEvent } from 'react';
+import { useSearchParams } from 'react-router-dom';
+import { DuoIcon } from '@/design-system/DuoIcon';
+import { getDom, getV2Theme, mapCategoryToDomain, type DomainId } from '@/design-system/v2Theme';
+import { useFeedback } from '@/components/feedback/FeedbackContext';
+import { V2BlockModal } from '@/components/v2/V2BlockModal';
+import { V2InboxDrawer } from '@/components/v2/V2InboxDrawer';
+import { V2ReadinessModal } from '@/components/v2/V2ReadinessModal';
 import { useAuth } from '@/modules/auth/AuthContext';
-import { listRunningSessions } from '@/modules/running/repository';
+import { useTheme } from '@/modules/theme/ThemeContext';
+import { getLocalDateString, getMondayWeekStart } from '@/lib/datetime';
 import {
   createScheduleBlock,
   deleteScheduleBlock,
@@ -24,863 +16,1000 @@ import {
   listReadinessCheckIns,
   listScheduleBlocks,
   listScheduleCompletions,
-  seedDefaultRecurringSchedule,
   updateScheduleBlock,
   upsertReadinessCheckIn,
   upsertScheduleCompletion,
 } from '@/modules/calendar/repository';
-import {
-  ISO_WEEKDAYS,
-  addDaysIso,
-  evaluateReadiness,
-  getMonthGridDates,
-  getWeekDates,
-} from '@/modules/calendar/scheduleEngine';
-import {
-  buildDailyTimeline,
-  formatMinutesToTime,
-  getMondayIso,
-  getUnscheduledInboxBlocks,
-  parseTimeToMinutes,
-} from '@/modules/calendar/timelineEngine';
-import { DailyTimelineView } from '@/modules/calendar/DailyTimelineView';
-import { WeeklyGridView } from '@/modules/calendar/WeeklyGridView';
-import { InboxSidebar } from '@/modules/calendar/InboxSidebar';
-import { ScheduleBlockModal } from '@/modules/calendar/ScheduleBlockModal';
-import { ReadinessCheckInModal } from '@/modules/calendar/ReadinessCheckInModal';
-import {
-  ACTIVITY_CATEGORY_LABELS,
-  type ActivityCategory,
-  type PlannedWorkout,
-  type ReadinessCheckIn,
-  type RunningSession,
-  type ScheduleBlock,
-  type ScheduleCompletion,
-  type ScheduleCompletionDraft,
+import { addDaysIso, getIsoWeekday, getMonthGridDates } from '@/modules/calendar/scheduleEngine';
+import type {
+  ReadinessCheckIn,
+  ReadinessCheckInDraft,
+  ScheduleBlock,
+  ScheduleBlockDraft,
+  ScheduleCompletion,
 } from '@/types/domain';
 
-type CalendarView = 'WEEK' | 'TIMELINE' | 'MONTH' | 'AGENDA';
+type CalendarViewMode = 'week' | 'day' | 'month' | 'agenda';
 
-const ALL_CATEGORIES: ActivityCategory[] = [
-  'RUNNING',
-  'KARATE',
-  'STRENGTH',
-  'RECOVERY',
-  'VOCAL',
-  'DRUMMING',
-  'GUITAR',
-  'KEYBOARD',
-  'UNIVERSITY',
-  'CUSTOM',
+const FILTER_DOMAINS: DomainId[] = [
+  'running',
+  'strength',
+  'karate',
+  'music',
+  'recovery',
+  'reading',
+  'health',
 ];
 
-async function fetchPlannedWorkoutsRange(
-  userId: string,
-  fromDate: string,
-  toDate: string
-): Promise<PlannedWorkout[]> {
-  if (!supabase) return [];
-  const { data, error } = await supabase
-    .from('planned_workouts')
-    .select('*')
-    .eq('user_id', userId)
-    .gte('plan_date', fromDate)
-    .lte('plan_date', toDate)
-    .order('plan_date', { ascending: true });
+function fmtDate(iso: string) {
+  const [y, m, d] = iso.split('-').map(Number);
+  const dt = new Date(Date.UTC(y, (m || 1) - 1, d || 1));
+  const days = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+  const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+  return {
+    dow: days[dt.getUTCDay()],
+    dayNum: d,
+    monthName: months[dt.getUTCMonth()],
+    year: y,
+    short: `${months[dt.getUTCMonth()]} ${d}`,
+    full: `${days[dt.getUTCDay()]}, ${months[dt.getUTCMonth()]} ${d}`,
+  };
+}
 
-  if (error) return [];
-  return (data ?? []) as PlannedWorkout[];
+function fmtTime12(hhmm: string | null): string {
+  if (!hhmm) return 'Anytime';
+  const [h, m] = hhmm.split(':').map(Number);
+  const ampm = h >= 12 ? 'PM' : 'AM';
+  const h12 = h % 12 || 12;
+  return `${h12}:${String(m).padStart(2, '0')} ${ampm}`;
+}
+
+function timeToMin(hhmm: string | null): number {
+  if (!hhmm) return 0;
+  const [h, m] = hhmm.split(':').map(Number);
+  return (h || 0) * 60 + (m || 0);
+}
+
+function fmtGap(mins: number): string {
+  if (mins < 60) return `${mins}m open`;
+  const h = Math.floor(mins / 60);
+  const m = mins % 60;
+  return m ? `${h}h ${m}m open` : `${h}h open`;
+}
+
+function pillShortName(title: string): string {
+  const first = (title || '').split(' ')[0];
+  return first.length > 10 ? `${first.slice(0, 9)}.` : first;
+}
+
+function isInboxBlock(block: ScheduleBlock): boolean {
+  return !block.is_recurring && !block.start_time;
+}
+
+function occursOnDate(block: ScheduleBlock, dateIso: string): boolean {
+  if (isInboxBlock(block)) return false;
+  if (block.is_recurring && block.recurrence_days.length > 0) {
+    return block.recurrence_days.includes(getIsoWeekday(dateIso));
+  }
+  return block.block_date === dateIso;
 }
 
 export function CalendarPage() {
+  const [searchParams] = useSearchParams();
   const { user, profile } = useAuth();
-  const tz = profile?.timezone ?? 'Asia/Colombo';
-  const today = getLocalDateString(new Date(), tz);
+  const { resolvedTheme } = useTheme();
+  const { triggerConfetti, pushToast } = useFeedback();
 
-  const [view, setView] = useState<CalendarView>('WEEK');
-  const [showInbox, setShowInbox] = useState(false);
-  const [showFilterMenu, setShowFilterMenu] = useState(false);
-  const [selectedDate, setSelectedDate] = useState(today);
-  const [categoryFilter, setCategoryFilter] = useState<ActivityCategory | 'ALL'>('ALL');
+  const isDark = resolvedTheme === 'dark';
+  const T = useMemo(() => getV2Theme(isDark), [isDark]);
+
+  const tz = profile?.timezone ?? 'Asia/Colombo';
+  const today = useMemo(() => getLocalDateString(new Date(), tz), [tz]);
+
+  const initialDate = searchParams.get('date') || today;
+  const initialViewParam = searchParams.get('view');
+  const initialView: CalendarViewMode =
+    initialViewParam === 'week' || initialViewParam === 'month' || initialViewParam === 'agenda'
+      ? initialViewParam
+      : 'day';
+
+  const [calView, setCalView] = useState<CalendarViewMode>(initialView);
+  const [selectedDate, setSelectedDate] = useState(initialDate);
+  const [weekStart, setWeekStart] = useState(() => getMondayWeekStart(initialDate));
+  const [filterDomain, setFilterDomain] = useState<'all' | DomainId>('all');
 
   const [blocks, setBlocks] = useState<ScheduleBlock[]>([]);
   const [completions, setCompletions] = useState<ScheduleCompletion[]>([]);
-  const [plannedRuns, setPlannedRuns] = useState<PlannedWorkout[]>([]);
-  const [runs, setRuns] = useState<RunningSession[]>([]);
-  const [checkIns, setCheckIns] = useState<ReadinessCheckIn[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
-  const [notice, setNotice] = useState<string | null>(null);
+  const [readinessList, setReadinessList] = useState<ReadinessCheckIn[]>([]);
 
-  const [showBlockModal, setShowBlockModal] = useState(false);
-  const [modalInitialBlock, setModalInitialBlock] = useState<ScheduleBlock | null>(null);
-  const [editingBlockId, setEditingBlockId] = useState<string | null>(null);
-  const [showReadinessModal, setShowReadinessModal] = useState(false);
-  const [seeding, setSeeding] = useState(false);
+  const [blockModal, setBlockModal] = useState<{
+    open: boolean;
+    block: ScheduleBlock | null;
+    defaultDate: string;
+  }>({ open: false, block: null, defaultDate: today });
+  const [savingBlock, setSavingBlock] = useState(false);
 
-  const weekStartIso = useMemo(() => getMondayIso(selectedDate), [selectedDate]);
+  const [inboxOpen, setInboxOpen] = useState(false);
+  const [inboxBusyId, setInboxBusyId] = useState<string | null>(null);
+  const [readinessOpen, setReadinessOpen] = useState(false);
+  const [savingReadiness, setSavingReadiness] = useState(false);
+  const [togglingKey, setTogglingKey] = useState<string | null>(null);
+  const [showPastAgenda, setShowPastAgenda] = useState(false);
 
-  const [anchorYear, anchorMonth] = useMemo(() => {
-    const [y, m] = selectedDate.split('-').map(Number);
-    return [y, m - 1] as const;
-  }, [selectedDate]);
+  const weekDates = useMemo(
+    () => Array.from({ length: 7 }, (_, i) => addDaysIso(weekStart, i)),
+    [weekStart]
+  );
 
-  const visibleDates = useMemo(() => {
-    if (view === 'MONTH') return getMonthGridDates(anchorYear, anchorMonth);
-    if (view === 'AGENDA') {
-      const start = getMondayIso(selectedDate);
-      return Array.from({ length: 14 }, (_, i) => addDaysIso(start, i));
-    }
-    return getWeekDates(selectedDate);
-  }, [view, anchorYear, anchorMonth, selectedDate]);
+  const selectedYear = Number(selectedDate.slice(0, 4));
+  const selectedMonthIdx = Number(selectedDate.slice(5, 7)) - 1;
+  const monthCells = useMemo(
+    () => getMonthGridDates(selectedYear, selectedMonthIdx),
+    [selectedYear, selectedMonthIdx]
+  );
 
-  const rangeStart = visibleDates[0];
-  const rangeEnd = visibleDates[visibleDates.length - 1];
+  const rangeStart = calView === 'month' ? monthCells[0] : weekDates[0];
+  const rangeEnd = calView === 'month' ? monthCells[monthCells.length - 1] : weekDates[6];
 
   const loadData = useCallback(async () => {
     if (!user) return;
-    setLoading(true);
-    setError(null);
-    try {
-      const fetchStart = addDaysIso(rangeStart, -7);
-      const fetchEnd = addDaysIso(rangeEnd, 7);
-
-      const [blockRows, runRows, checkInRows, completionRows, planRows] = await Promise.all([
-        listScheduleBlocks(user.id),
-        listRunningSessions(user.id),
-        listReadinessCheckIns(user.id, 30),
-        listScheduleCompletions(user.id, fetchStart, fetchEnd).catch(() => []),
-        fetchPlannedWorkoutsRange(user.id, fetchStart, fetchEnd),
-      ]);
-
-      setBlocks(blockRows);
-      setRuns(runRows);
-      setCheckIns(checkInRows);
-      setCompletions(completionRows);
-      setPlannedRuns(planRows);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to load calendar data.');
-    } finally {
-      setLoading(false);
-    }
+    const [blks, comps, ready] = await Promise.all([
+      listScheduleBlocks(user.id),
+      listScheduleCompletions(user.id, rangeStart, rangeEnd),
+      listReadinessCheckIns(user.id, 14),
+    ]);
+    setBlocks(blks);
+    setCompletions(comps);
+    setReadinessList(ready);
   }, [user, rangeStart, rangeEnd]);
 
   useEffect(() => {
     void loadData();
   }, [loadData]);
 
+  const completionMap = useMemo(() => {
+    const m = new Map<string, ScheduleCompletion>();
+    for (const c of completions) {
+      m.set(`${c.block_id}__${c.occurrence_date}`, c);
+    }
+    return m;
+  }, [completions]);
+
+  const inboxBlocks = useMemo(() => blocks.filter(isInboxBlock), [blocks]);
+
   const filteredBlocks = useMemo(() => {
-    if (categoryFilter === 'ALL') return blocks;
-    return blocks.filter((b) => b.category === categoryFilter);
-  }, [blocks, categoryFilter]);
+    if (filterDomain === 'all') return blocks;
+    return blocks.filter((b) => mapCategoryToDomain(b.category) === filterDomain);
+  }, [blocks, filterDomain]);
 
-  const filteredRuns = useMemo(() => {
-    if (categoryFilter === 'ALL' || categoryFilter === 'RUNNING') return runs;
-    return [];
-  }, [runs, categoryFilter]);
-
-  const filteredPlannedRuns = useMemo(() => {
-    if (categoryFilter === 'ALL' || categoryFilter === 'RUNNING') return plannedRuns;
-    return [];
-  }, [plannedRuns, categoryFilter]);
-
-  const inboxBlocks = useMemo(() => getUnscheduledInboxBlocks(blocks), [blocks]);
-
-  // Unified timelines for Month and Agenda views so recurring blocks render consistently across all weeks
-  const rangeTimelines = useMemo(() => {
-    if (view !== 'MONTH' && view !== 'AGENDA') return [];
-    return visibleDates.map((d) =>
-      buildDailyTimeline(d, filteredBlocks, completions, filteredPlannedRuns, filteredRuns)
-    );
-  }, [view, visibleDates, filteredBlocks, completions, filteredPlannedRuns, filteredRuns]);
-
-  const todayCheckIn = useMemo(
-    () => checkIns.find((c) => c.checkin_date === today) ?? null,
-    [checkIns, today]
-  );
-  const readinessEval = useMemo(() => evaluateReadiness(todayCheckIn), [todayCheckIn]);
-
-  const hasStrengthBlock = useMemo(
-    () => blocks.some((b) => b.category === 'STRENGTH'),
-    [blocks]
+  const todayReadiness = useMemo(
+    () => readinessList.find((r) => r.checkin_date === today) ?? readinessList[0] ?? null,
+    [readinessList, today]
   );
 
-  function stepPeriod(direction: -1 | 1) {
-    if (view === 'MONTH') {
-      const next = new Date(Date.UTC(anchorYear, anchorMonth + direction, 1));
-      setSelectedDate(next.toISOString().slice(0, 10));
-    } else if (view === 'TIMELINE') {
-      setSelectedDate(addDaysIso(selectedDate, direction));
+  const readinessScore = useMemo(() => {
+    if (!todayReadiness) return null;
+    const e = todayReadiness.energy_level ?? 3;
+    const s = todayReadiness.sleep_quality ?? 3;
+    const sore = todayReadiness.muscle_soreness ?? 3;
+    return Math.round(((e + s + (6 - sore)) / 15) * 100);
+  }, [todayReadiness]);
+
+  function getBlocksForDate(iso: string): ScheduleBlock[] {
+    return filteredBlocks
+      .filter((b) => occursOnDate(b, iso))
+      .sort((a, b) => (a.start_time ?? '23:59').localeCompare(b.start_time ?? '23:59'));
+  }
+
+  function shiftPeriod(delta: number) {
+    if (calView === 'month') {
+      const nextDt = new Date(Date.UTC(selectedYear, selectedMonthIdx + delta, 1));
+      const nextIso = nextDt.toISOString().slice(0, 10);
+      setSelectedDate(nextIso);
+      setWeekStart(getMondayWeekStart(nextIso));
+    } else if (calView === 'day') {
+      const nextIso = addDaysIso(selectedDate, delta);
+      setSelectedDate(nextIso);
+      setWeekStart(getMondayWeekStart(nextIso));
     } else {
-      setSelectedDate(addDaysIso(selectedDate, direction * 7));
+      const nextWeek = addDaysIso(weekStart, delta * 7);
+      setWeekStart(nextWeek);
+      setSelectedDate(nextWeek);
     }
   }
 
-  function openNewBlockModal() {
-    setEditingBlockId(null);
-    setModalInitialBlock(null);
-    setShowBlockModal(true);
-  }
-
-  function openEditBlockModal(block: ScheduleBlock) {
-    setEditingBlockId(block.id);
-    setModalInitialBlock(block);
-    setShowBlockModal(true);
-  }
-
-  function openSlotModal(dateIso: string, startTime: string, endTime: string) {
+  async function handleToggleDone(block: ScheduleBlock, dateIso: string, e: MouseEvent) {
     if (!user) return;
-    const startMin = parseTimeToMinutes(startTime) ?? 9 * 60;
-    const endMin = parseTimeToMinutes(endTime) ?? startMin + 45;
-    const defaultDur = Math.min(60, Math.max(15, endMin - startMin));
-    const suggestedEnd = formatMinutesToTime(startMin + defaultDur);
-
-    setEditingBlockId(null);
-    setModalInitialBlock({
-      id: '',
-      user_id: user.id,
-      title: '',
-      category: 'UNIVERSITY',
-      block_date: dateIso,
-      start_time: startTime,
-      end_time: suggestedEnd,
-      duration_min: defaultDur,
-      is_recurring: false,
-      recurrence_days: [],
-      status: 'PLANNED',
-      physical_load: 'NONE',
-      notes: null,
-      data_origin: 'PLANNED',
-      created_at: new Date().toISOString(),
-    });
-    setShowBlockModal(true);
-  }
-
-  function openSlotInboxModal(block: ScheduleBlock) {
-    const dur = block.duration_min ?? 45;
-    setEditingBlockId(block.id);
-    setModalInitialBlock({
-      ...block,
-      block_date: selectedDate,
-      start_time: '09:00',
-      end_time: formatMinutesToTime(9 * 60 + dur),
-      duration_min: dur,
-    });
-    setShowBlockModal(true);
-  }
-
-  async function handleSaveCompletion(draft: ScheduleCompletionDraft) {
-    if (!user) return;
-    setError(null);
+    const key = `${block.id}__${dateIso}`;
+    if (togglingKey === key) return;
+    setTogglingKey(key);
+    const existing = completionMap.get(key);
     try {
-      const saved = await upsertScheduleCompletion(user.id, draft);
-      setCompletions((prev) => {
-        const rest = prev.filter(
-          (c) =>
-            !(c.block_id === saved.block_id && c.occurrence_date === saved.occurrence_date)
-        );
-        return [saved, ...rest];
-      });
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to save daily check-off.');
-    }
-  }
-
-  async function handleClearCompletion(blockId: string, occurrenceDate: string) {
-    if (!user) return;
-    setError(null);
-    try {
-      await deleteScheduleCompletion(user.id, blockId, occurrenceDate);
-      setCompletions((prev) =>
-        prev.filter(
-          (c) => !(c.block_id === blockId && c.occurrence_date === occurrenceDate)
-        )
-      );
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to undo daily check-off.');
-    }
-  }
-
-  async function handleSeedDefaults() {
-    if (!user) return;
-    setSeeding(true);
-    setNotice(null);
-    setError(null);
-    try {
-      const added = await seedDefaultRecurringSchedule(user.id, today);
-      await loadData();
-      setNotice(
-        added > 0
-          ? `Added ${added} recurring schedule template(s).`
-          : 'Default recurring templates already exist.'
-      );
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Unable to seed default schedule.');
+      if (existing?.status === 'COMPLETED') {
+        await deleteScheduleCompletion(user.id, block.id, dateIso);
+      } else {
+        await upsertScheduleCompletion(user.id, {
+          block_id: block.id,
+          occurrence_date: dateIso,
+          status: 'COMPLETED',
+          strength_focus: block.category === 'STRENGTH' ? 'UPPER' : null,
+          duration_min: block.duration_min ?? 30,
+          physical_load: block.physical_load,
+          notes: null,
+        });
+        triggerConfetti(e.clientX, e.clientY);
+      }
+      const fresh = await listScheduleCompletions(user.id, rangeStart, rangeEnd);
+      setCompletions(fresh);
     } finally {
-      setSeeding(false);
+      setTogglingKey(null);
+    }
+  }
+
+  async function handleSaveBlock(draft: ScheduleBlockDraft, existingId: string | null) {
+    if (!user) return;
+    setSavingBlock(true);
+    try {
+      if (existingId) {
+        await updateScheduleBlock(user.id, existingId, draft);
+        pushToast('Block updated', '#2563EB');
+      } else {
+        await createScheduleBlock(user.id, draft);
+        pushToast('Block added', '#2563EB');
+      }
+      setBlockModal({ open: false, block: null, defaultDate: selectedDate });
+      await loadData();
+    } finally {
+      setSavingBlock(false);
     }
   }
 
   async function handleDeleteBlock(blockId: string) {
     if (!user) return;
-    if (!window.confirm('Delete this schedule block?')) return;
-    await deleteScheduleBlock(user.id, blockId);
+    setSavingBlock(true);
+    try {
+      await deleteScheduleBlock(user.id, blockId);
+      setBlockModal({ open: false, block: null, defaultDate: selectedDate });
+      pushToast('Block deleted', '#DB2777');
+      await loadData();
+    } finally {
+      setSavingBlock(false);
+    }
+  }
+
+  async function handleAddInbox(title: string) {
+    if (!user) return;
+    await createScheduleBlock(user.id, {
+      title,
+      category: 'CUSTOM',
+      block_date: today,
+      start_time: null,
+      end_time: null,
+      duration_min: 30,
+      is_recurring: false,
+      recurrence_days: [],
+      status: 'PLANNED',
+      physical_load: 'NONE',
+      notes: 'Inbox',
+    });
+    pushToast('Added to Inbox', '#4F46E5');
     await loadData();
   }
 
-  const periodTitle = useMemo(() => {
-    if (view === 'MONTH') {
-      return new Date(Date.UTC(anchorYear, anchorMonth, 1)).toLocaleDateString('en-US', {
-        month: 'long',
-        year: 'numeric',
-        timeZone: 'UTC',
+  async function handleScheduleInbox(block: ScheduleBlock) {
+    if (!user) return;
+    setInboxBusyId(block.id);
+    try {
+      await updateScheduleBlock(user.id, block.id, {
+        title: block.title,
+        category: block.category,
+        block_date: selectedDate,
+        start_time: '16:00',
+        end_time: '16:30',
+        duration_min: block.duration_min ?? 30,
+        is_recurring: false,
+        recurrence_days: [],
+        status: 'PLANNED',
+        physical_load: block.physical_load,
+        notes: block.notes,
       });
+      pushToast(`Scheduled "${block.title}"`, '#10B981');
+      await loadData();
+    } finally {
+      setInboxBusyId(null);
     }
-    if (view === 'TIMELINE') {
-      const [y, m, d] = selectedDate.split('-').map(Number);
-      return new Date(Date.UTC(y, m - 1, d)).toLocaleDateString('en-US', {
-        weekday: 'short',
-        month: 'short',
-        day: 'numeric',
-        year: 'numeric',
-        timeZone: 'UTC',
-      });
+  }
+
+  async function handleDeleteInbox(blockId: string) {
+    if (!user) return;
+    setInboxBusyId(blockId);
+    try {
+      await deleteScheduleBlock(user.id, blockId);
+      await loadData();
+    } finally {
+      setInboxBusyId(null);
     }
-    return `${rangeStart} → ${rangeEnd}`;
-  }, [view, anchorYear, anchorMonth, selectedDate, rangeStart, rangeEnd]);
+  }
+
+  async function handleSaveReadiness(draft: ReadinessCheckInDraft) {
+    if (!user) return;
+    setSavingReadiness(true);
+    try {
+      await upsertReadinessCheckIn(user.id, draft);
+      setReadinessOpen(false);
+      pushToast('Readiness updated', '#0D9488');
+      await loadData();
+    } finally {
+      setSavingReadiness(false);
+    }
+  }
+
+  const sleepDom = getDom('sleep', isDark);
+  const healthDom = getDom('health', isDark);
+  const readDom = getDom('reading', isDark);
+  const monthPrefix = `${selectedYear}-${String(selectedMonthIdx + 1).padStart(2, '0')}`;
+  const agendaTotalBlocks = weekDates.reduce((acc, iso) => acc + getBlocksForDate(iso).length, 0);
+  const agendaDoneBlocks = weekDates.reduce(
+    (acc, iso) =>
+      acc +
+      getBlocksForDate(iso).filter(
+        (b) => completionMap.get(`${b.id}__${iso}`)?.status === 'COMPLETED'
+      ).length,
+    0
+  );
+  const agendaActiveDays = weekDates.filter((iso) => getBlocksForDate(iso).length > 0).length;
 
   return (
-    <div className="flex h-full min-h-0 flex-col bg-[var(--bg)] text-[var(--ink)]">
-      {/* Compact Single-Row Stride Control Bar (viewport-locked, zero page scroll) */}
-      <div className="relative z-20 flex shrink-0 flex-wrap items-center justify-between gap-3 border-b border-[var(--line)] bg-[var(--surface)] px-5 py-3">
-        {/* Left: Date Navigation */}
-        <div className="flex items-center gap-1.5">
+    <div className="animate-pop flex flex-1 flex-col space-y-5">
+      {/* Toolbar */}
+      <div className={`flex flex-wrap items-center justify-between gap-3 rounded-3xl border p-4 ${T.card}`}>
+        <div className="flex items-center gap-2">
           <button
             type="button"
-            onClick={() => stepPeriod(-1)}
+            onClick={() => shiftPeriod(-1)}
             aria-label="Previous"
-            className="flex h-9 w-9 items-center justify-center rounded-[8px] border border-[var(--line)] bg-[var(--surface)] text-[var(--ink)] transition-colors hover:bg-[var(--surface-2)]"
+            className={`h-9 w-9 cursor-pointer rounded-xl font-extrabold ${T.btnNeutral}`}
           >
-            <ChevronLeft className="h-4 w-4" />
+            ‹
           </button>
           <button
             type="button"
-            onClick={() => setSelectedDate(today)}
-            className="h-9 rounded-[8px] border border-[var(--line)] bg-[var(--surface)] px-3.5 text-[12px] font-semibold text-[var(--ink)] transition-colors hover:bg-[var(--surface-2)]"
+            onClick={() => {
+              setSelectedDate(today);
+              setWeekStart(getMondayWeekStart(today));
+            }}
+            className={`cursor-pointer rounded-xl px-3.5 py-2 text-xs font-extrabold ${T.btnNeutral}`}
           >
             Today
           </button>
           <button
             type="button"
-            onClick={() => stepPeriod(1)}
+            onClick={() => shiftPeriod(1)}
             aria-label="Next"
-            className="flex h-9 w-9 items-center justify-center rounded-[8px] border border-[var(--line)] bg-[var(--surface)] text-[var(--ink)] transition-colors hover:bg-[var(--surface-2)]"
+            className={`h-9 w-9 cursor-pointer rounded-xl font-extrabold ${T.btnNeutral}`}
           >
-            <ChevronRight className="h-4 w-4" />
+            ›
           </button>
-          <h1 className="ml-2.5 text-[15px] font-bold tracking-[-0.02em] text-[var(--ink)]">
-            {periodTitle}
-          </h1>
+          <span className={`ml-1 font-display text-sm font-extrabold tabular-nums sm:text-base ${T.text}`}>
+            {calView === 'month'
+              ? `${fmtDate(selectedDate).monthName} ${selectedYear}`
+              : `${fmtDate(weekDates[0]).short} – ${fmtDate(weekDates[6]).short}`}
+          </span>
         </div>
 
-        {/* Center: Stride Segmented View Switcher */}
-        <div
-          role="tablist"
-          aria-label="Calendar view"
-          className="inline-flex rounded-[10px] border border-[var(--line)] bg-[var(--surface-2)] p-1 text-[12px] font-semibold"
-        >
-          {(
-            [
-              { id: 'WEEK', label: 'Week' },
-              { id: 'TIMELINE', label: 'Day' },
-              { id: 'MONTH', label: 'Month' },
-              { id: 'AGENDA', label: 'Agenda' },
-            ] as const
-          ).map(({ id, label }) => {
-            const selected = view === id;
-            return (
-              <button
-                key={id}
-                role="tab"
-                aria-selected={selected}
-                type="button"
-                onClick={() => setView(id)}
-                className={`rounded-[7px] px-3.5 py-1.5 transition-colors ${
-                  selected
-                    ? 'bg-[var(--surface)] text-[var(--ink)] shadow-[0_1px_3px_rgba(0,0,0,0.08)]'
-                    : 'text-[var(--muted)] hover:text-[var(--ink)]'
-                }`}
-              >
-                {label}
-              </button>
-            );
-          })}
-        </div>
-
-        {/* Right: Utility Actions */}
-        <div className="flex flex-wrap items-center gap-2">
-          {!loading && (blocks.length === 0 || !hasStrengthBlock) && (
+        {/* Segmented View Switcher */}
+        <div className={`inline-flex rounded-2xl border p-1 ${T.cardSubtle}`}>
+          {(['day', 'week', 'month', 'agenda'] as CalendarViewMode[]).map((v) => (
             <button
+              key={v}
               type="button"
-              disabled={seeding}
-              onClick={() => void handleSeedDefaults()}
-              className="inline-flex h-9 items-center gap-1.5 rounded-[8px] border border-transparent bg-[var(--blue-lite)] px-3 text-[12px] font-semibold text-[var(--blue-ink)] transition-opacity hover:opacity-85 disabled:opacity-50"
-            >
-              <Sparkles className="h-3.5 w-3.5" />
-              <span>{seeding ? 'Adding...' : 'Seed Templates'}</span>
-            </button>
-          )}
-
-          {/* Category Filter Dropdown */}
-          <div className="relative">
-            <button
-              type="button"
-              onClick={() => setShowFilterMenu((v) => !v)}
-              className={`inline-flex h-9 items-center gap-1.5 rounded-[8px] border px-3 text-[12px] font-semibold transition-colors ${
-                categoryFilter !== 'ALL'
-                  ? 'border-[var(--blue)] bg-[var(--blue-lite)] text-[var(--blue-ink)]'
-                  : 'border-[var(--line)] bg-[var(--surface)] text-[var(--ink)] hover:bg-[var(--surface-2)]'
+              onClick={() => setCalView(v)}
+              className={`cursor-pointer rounded-xl px-3.5 py-1.5 text-xs font-extrabold capitalize transition-all active:scale-[0.98] ${
+                calView === v
+                  ? isDark
+                    ? 'bg-[#242424] text-[#F5F5F5]'
+                    : 'bg-white text-[#0F172A] shadow-sm'
+                  : T.muted
               }`}
             >
-              <Filter className="h-3.5 w-3.5" />
-              <span>
-                {categoryFilter === 'ALL'
-                  ? 'All activities'
-                  : CATEGORY_SHORT_LABELS[categoryFilter]}
-              </span>
+              {v}
             </button>
+          ))}
+        </div>
 
-            {showFilterMenu && (
-              <>
-                <div
-                  className="fixed inset-0 z-30"
-                  onClick={() => setShowFilterMenu(false)}
-                />
-                <div className="absolute right-0 top-11 z-40 w-52 rounded-xl border border-[var(--line)] bg-[var(--surface)] p-1.5 shadow-[var(--shadow)]">
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setCategoryFilter('ALL');
-                      setShowFilterMenu(false);
-                    }}
-                    className={`flex w-full items-center justify-between rounded-lg px-2.5 py-2 text-left text-[12px] font-medium transition-colors ${
-                      categoryFilter === 'ALL'
-                        ? 'bg-[var(--blue-lite)] font-semibold text-[var(--blue-ink)]'
-                        : 'text-[var(--ink)] hover:bg-[var(--surface-2)]'
-                    }`}
-                  >
-                    <span>All activities</span>
-                  </button>
-                  {ALL_CATEGORIES.map((cat) => (
-                    <button
-                      key={cat}
-                      type="button"
-                      onClick={() => {
-                        setCategoryFilter(cat);
-                        setShowFilterMenu(false);
-                      }}
-                      className={`mt-0.5 flex w-full items-center gap-2 rounded-lg px-2.5 py-1.5 text-left text-[12px] font-medium transition-colors ${
-                        categoryFilter === cat
-                          ? 'bg-[var(--blue-lite)] font-semibold text-[var(--blue-ink)]'
-                          : 'text-[var(--ink)] hover:bg-[var(--surface-2)]'
-                      }`}
-                    >
-                      <CategoryDot category={cat} />
-                      <span>{ACTIVITY_CATEGORY_LABELS[cat]}</span>
-                    </button>
-                  ))}
-                </div>
-              </>
-            )}
-          </div>
-
-          {/* Inbox Drawer Toggle */}
+        {/* Right Controls */}
+        <div className="flex flex-wrap items-center gap-2">
           <button
             type="button"
-            onClick={() => setShowInbox((v) => !v)}
-            className={`inline-flex h-9 items-center gap-1.5 rounded-[8px] border px-3 text-[12px] font-semibold transition-colors ${
-              showInbox
-                ? 'border-[var(--blue)] bg-[var(--blue-lite)] text-[var(--blue-ink)]'
-                : 'border-[var(--line)] bg-[var(--surface)] text-[var(--ink)] hover:bg-[var(--surface-2)]'
-            }`}
+            onClick={() => setInboxOpen(true)}
+            className={`inline-flex cursor-pointer items-center gap-1.5 rounded-xl px-3 py-2 text-xs font-extrabold ${T.btnNeutral}`}
           >
-            <Inbox className="h-3.5 w-3.5" />
-            <span className="hidden sm:inline">Inbox</span>
-            <span className="rounded-[6px] bg-[var(--surface-2)] px-1.5 py-0.5 font-mono text-[10px] font-bold text-[var(--muted)]">
+            Inbox
+            <span className={`rounded-md px-1.5 py-0.5 tabular-nums ${sleepDom.soft} ${sleepDom.text}`}>
               {inboxBlocks.length}
             </span>
           </button>
 
-          {/* Readiness Pill */}
           <button
             type="button"
-            onClick={() => setShowReadinessModal(true)}
-            title={readinessEval.summary}
-            className="inline-flex h-9 items-center gap-1.5 rounded-[8px] border border-[var(--line)] bg-[var(--surface)] px-3 text-[12px] font-semibold text-[var(--ink)] transition-colors hover:bg-[var(--surface-2)]"
+            onClick={() => setReadinessOpen(true)}
+            className={`cursor-pointer rounded-xl border px-3 py-2 text-xs font-extrabold tabular-nums transition-all active:scale-[0.98] ${healthDom.soft} ${healthDom.border} ${healthDom.text}`}
           >
-            <HeartPulse className="h-3.5 w-3.5 text-[var(--blue)]" />
-            <span className="hidden md:inline">
-              {readinessEval.score !== null ? `${readinessEval.score}/100` : 'Readiness'}
-            </span>
+            {readinessScore !== null ? `Readiness ${readinessScore}%` : 'Readiness'}
           </button>
 
-          {/* Primary Add Block */}
           <button
             type="button"
-            onClick={openNewBlockModal}
-            className="inline-flex h-9 items-center gap-1.5 rounded-[9px] bg-[var(--blue)] px-4 text-[12.5px] font-bold text-white transition-opacity hover:opacity-90 active:translate-y-px dark:text-[#121315]"
+            onClick={() => setBlockModal({ open: true, block: null, defaultDate: selectedDate })}
+            className={`cursor-pointer rounded-xl px-4 py-2 font-display text-xs font-bold ${T.btnPrimary}`}
           >
-            <Plus className="h-4 w-4 stroke-[2.5]" />
-            <span>Add block</span>
+            + Add block
           </button>
         </div>
       </div>
 
-      {/* Slim Dismissible Alert Strip */}
-      {(error || notice) && (
-        <div
-          className={`flex shrink-0 items-center justify-between gap-2 border-b px-5 py-2 text-xs font-medium ${
-            error
-              ? 'border-red-300/60 bg-red-500/10 text-red-700 dark:text-red-300'
-              : 'border-[var(--line)] bg-[var(--blue-lite)] text-[var(--blue-ink)]'
+      {/* Category Filter Chips */}
+      <div className="flex items-center gap-1.5 overflow-x-auto pb-1">
+        <button
+          type="button"
+          onClick={() => setFilterDomain('all')}
+          className={`shrink-0 cursor-pointer rounded-xl px-3.5 py-1.5 text-xs font-extrabold transition-all active:scale-[0.98] ${
+            filterDomain === 'all' ? T.btnInk : T.btnWhite
           }`}
         >
-          <span>{error ?? notice}</span>
-          <button
-            type="button"
-            onClick={() => {
-              setError(null);
-              setNotice(null);
-            }}
-            aria-label="Dismiss message"
-          >
-            <X className="h-3.5 w-3.5" />
-          </button>
+          All
+        </button>
+        {FILTER_DOMAINS.map((cid) => {
+          const d = getDom(cid, isDark);
+          const sel = filterDomain === cid;
+          return (
+            <button
+              key={cid}
+              type="button"
+              onClick={() => setFilterDomain(cid)}
+              className={`inline-flex shrink-0 cursor-pointer items-center gap-1.5 rounded-xl border px-3 py-1.5 text-xs font-extrabold transition-all active:scale-[0.98] ${
+                sel ? `${d.bg} border-transparent text-white` : `${T.card} ${T.muted} hover:${T.text}`
+              }`}
+            >
+              <span className={sel ? 'text-white' : d.text}>
+                <DuoIcon name={cid} className="h-3.5 w-3.5" />
+              </span>
+              {d.label}
+            </button>
+          );
+        })}
+      </div>
+
+      {/* WEEK VIEW */}
+      {calView === 'week' && (
+        <div className="grid flex-1 grid-cols-1 items-stretch gap-3 md:grid-cols-2 xl:grid-cols-7">
+          {weekDates.map((iso) => {
+            const f = fmtDate(iso);
+            const isToday = iso === today;
+            const dayEvs = getBlocksForDate(iso);
+            return (
+              <div
+                key={iso}
+                className={`flex h-full min-h-[calc(100vh-235px)] flex-col justify-between gap-3 rounded-3xl border p-3.5 ${
+                  isToday
+                    ? isDark
+                      ? 'border-[#3B82F6] bg-[#101010]'
+                      : 'border-[#2563EB] bg-white'
+                    : T.card
+                }`}
+              >
+                <div className="space-y-2.5">
+                  <div className={`flex items-center justify-between border-b pb-2 ${T.divider}`}>
+                    <div>
+                      <span
+                        className={`block text-[10px] font-extrabold uppercase ${
+                          isToday ? 'text-[#2563EB]' : T.muted
+                        }`}
+                      >
+                        {f.dow}
+                      </span>
+                      <span
+                        className={`font-display text-xl font-extrabold tabular-nums ${
+                          isToday ? (isDark ? 'text-[#60A5FA]' : 'text-[#2563EB]') : T.text
+                        }`}
+                      >
+                        {f.dayNum}
+                      </span>
+                    </div>
+                    <span
+                      className={`rounded-lg border px-2 py-0.5 text-[11px] font-extrabold tabular-nums ${T.cardSubtle} ${T.muted}`}
+                    >
+                      {dayEvs.length}
+                    </span>
+                  </div>
+
+                  <div className="space-y-2">
+                    {dayEvs.map((ev) => {
+                      const domId = mapCategoryToDomain(ev.category);
+                      const d = getDom(domId, isDark);
+                      const done = completionMap.get(`${ev.id}__${iso}`)?.status === 'COMPLETED';
+                      return (
+                        <div
+                          key={`${ev.id}-${iso}`}
+                          className={`rounded-2xl border p-2.5 transition-all ${
+                            done
+                              ? isDark
+                                ? 'border-[#34D399]/30 bg-[#10B981]/10'
+                                : 'border-[#A7F3D0] bg-[#ECFDF5]'
+                              : `${d.soft} ${d.border}`
+                          }`}
+                        >
+                          <div className="flex items-start justify-between gap-1.5">
+                            <button
+                              type="button"
+                              onClick={() =>
+                                setBlockModal({ open: true, block: ev, defaultDate: iso })
+                              }
+                              className="min-w-0 flex-1 cursor-pointer text-left"
+                            >
+                              <div className="flex items-center gap-1.5">
+                                <span className={d.text}>
+                                  <DuoIcon name={domId} className="h-4 w-4" />
+                                </span>
+                                <span className={`text-[10px] font-extrabold tabular-nums ${T.muted}`}>
+                                  {fmtTime12(ev.start_time)}
+                                </span>
+                              </div>
+                              <div
+                                className={`mt-1 font-display text-xs font-bold leading-snug ${
+                                  done ? `line-through opacity-60 ${T.muted}` : T.text
+                                }`}
+                              >
+                                {ev.title}
+                              </div>
+                              <span
+                                className={`mt-1 inline-block rounded-md px-1.5 py-0.5 text-[10px] font-extrabold tabular-nums ${
+                                  isDark ? 'bg-black/50' : 'bg-white/80'
+                                } ${d.text}`}
+                              >
+                                {d.label} · {ev.duration_min ?? 30}m
+                              </span>
+                            </button>
+                            <button
+                              type="button"
+                              onClick={(e) => void handleToggleDone(ev, iso, e)}
+                              className={`flex h-6 w-6 shrink-0 cursor-pointer items-center justify-center rounded-lg border text-[11px] font-extrabold transition-all active:scale-95 ${
+                                done
+                                  ? 'border-transparent bg-[#059669] text-white'
+                                  : isDark
+                                    ? 'border-[#333333] bg-[#101010] text-transparent hover:border-[#34D399]'
+                                    : 'border-[#CBD5E1] bg-white text-transparent hover:border-[#059669]'
+                              }`}
+                            >
+                              ✓
+                            </button>
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+
+                <button
+                  type="button"
+                  onClick={() => setBlockModal({ open: true, block: null, defaultDate: iso })}
+                  className={`w-full cursor-pointer rounded-xl py-2 text-xs font-extrabold ${T.btnNeutral}`}
+                >
+                  + Add
+                </button>
+              </div>
+            );
+          })}
         </div>
       )}
 
-      {/* Main Full-Height Calendar Body */}
-      <div className="flex min-h-0 flex-1 overflow-hidden">
-        {/* Optional Slide-In Unscheduled Inbox Rail */}
-        {showInbox && (
-          <div className="w-72 shrink-0 overflow-y-auto border-r border-[var(--line)] bg-[var(--bg)] p-3.5">
-            <InboxSidebar
-              selectedDate={selectedDate}
-              inboxBlocks={inboxBlocks}
-              onQuickAddInbox={async (draft) => {
-                if (!user) return;
-                await createScheduleBlock(user.id, draft);
-                await loadData();
-              }}
-              onSlotToSelectedDay={openSlotInboxModal}
-            />
-          </div>
-        )}
-
-        {/* Active Calendar Surface */}
-        <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
-          {loading ? (
-            <div className="flex flex-1 items-center justify-center text-sm text-[var(--muted)]">
-              Loading calendar...
+      {/* DAY VIEW */}
+      {calView === 'day' && (() => {
+        const dayEvs = getBlocksForDate(selectedDate);
+        const doneN = dayEvs.filter(
+          (e) => completionMap.get(`${e.id}__${selectedDate}`)?.status === 'COMPLETED'
+        ).length;
+        return (
+          <div className="space-y-5">
+            <div className={`grid grid-cols-7 gap-2 rounded-3xl border p-2.5 ${T.card}`}>
+              {weekDates.map((iso) => {
+                const f = fmtDate(iso);
+                const sel = iso === selectedDate;
+                return (
+                  <button
+                    key={iso}
+                    type="button"
+                    onClick={() => setSelectedDate(iso)}
+                    className={`flex cursor-pointer flex-col items-center rounded-2xl border py-2.5 transition-all active:scale-[0.98] ${
+                      sel
+                        ? 'border-transparent bg-[#2563EB] text-white'
+                        : `${T.cardSubtle} ${T.text} ${T.surfaceHover}`
+                    }`}
+                  >
+                    <span className={`text-[10px] font-extrabold uppercase ${sel ? 'text-blue-100' : T.muted}`}>
+                      {f.dow}
+                    </span>
+                    <span className="font-display text-lg font-extrabold tabular-nums">{f.dayNum}</span>
+                  </button>
+                );
+              })}
             </div>
-          ) : view === 'WEEK' ? (
-            <div className="flex h-full min-h-0 flex-1 flex-col overflow-hidden bg-[var(--bg)] p-4 sm:p-5">
-              <div className="mx-auto flex h-full min-h-0 w-full max-w-[1360px] flex-col overflow-hidden rounded-2xl border border-[var(--line)] bg-[var(--surface)]">
-                <WeeklyGridView
-                  weekStartIso={weekStartIso}
-                  todayIso={today}
-                  blocks={filteredBlocks}
-                  completions={completions}
-                  plannedRuns={filteredPlannedRuns}
-                  recordedRuns={filteredRuns}
-                  onSelectDate={(dateIso) => {
-                    setSelectedDate(dateIso);
-                    setView('TIMELINE');
-                  }}
-                  onEditBlock={openEditBlockModal}
-                  onCreateAtSlot={openSlotModal}
-                />
+
+            <div className={`space-y-4 rounded-3xl border p-6 ${T.card}`}>
+              <div className="flex items-center justify-between">
+                <h2 className={`font-display text-xl font-extrabold ${T.text}`}>
+                  {fmtDate(selectedDate).full}
+                </h2>
+                <span
+                  className={`rounded-xl border px-3 py-1 text-xs font-extrabold tabular-nums ${readDom.soft} ${readDom.border} ${readDom.text}`}
+                >
+                  {doneN} / {dayEvs.length} done
+                </span>
               </div>
-            </div>
-          ) : view === 'TIMELINE' ? (
-            <div className="min-h-0 flex-1 overflow-y-auto bg-[var(--bg)] p-5 sm:p-6">
-              <div className="mx-auto max-w-4xl">
-                <DailyTimelineView
-                  weekStartIso={weekStartIso}
-                  selectedDate={selectedDate}
-                  todayIso={today}
-                  blocks={filteredBlocks}
-                  completions={completions}
-                  plannedRuns={filteredPlannedRuns}
-                  recordedRuns={filteredRuns}
-                  onSelectDate={setSelectedDate}
-                  onEditBlock={openEditBlockModal}
-                  onCreateAtGap={openSlotModal}
-                  onSaveCompletion={handleSaveCompletion}
-                  onClearCompletion={handleClearCompletion}
-                />
-              </div>
-            </div>
-          ) : view === 'MONTH' ? (
-            (() => {
-              const monthRows = Math.max(4, Math.ceil(rangeTimelines.length / 7));
-              return (
-                <div className="flex h-full min-h-0 flex-1 flex-col overflow-hidden bg-[var(--bg)] p-4 sm:p-5">
-                  <div className="mx-auto flex h-full min-h-0 w-full max-w-[1360px] flex-col overflow-hidden rounded-2xl border border-[#bfc2bc] bg-[var(--surface)] dark:border-[#52565f]">
-                    <div
-                      className="grid h-full min-h-0 flex-1 grid-cols-7 gap-px bg-[#bfc2bc] dark:bg-[#52565f]"
-                      style={{
-                        gridTemplateRows: `36px repeat(${monthRows}, minmax(0, 1fr))`,
-                      }}
-                    >
-                      {ISO_WEEKDAYS.map((d) => (
-                        <div
-                          key={d.iso}
-                          className="grid place-items-center bg-[var(--surface-2)] text-[11px] font-bold uppercase tracking-[0.06em] text-[var(--muted)]"
-                        >
-                          {d.short}
-                        </div>
-                      ))}
 
-                      {rangeTimelines.map((dt) => {
-                        const date = dt.dateStr;
-                        const inMonth = Number(date.slice(5, 7)) - 1 === anchorMonth;
-                        const isToday = date === today;
-                        const dayItems = [...dt.allDayItems, ...dt.timedItems];
+              <div className="space-y-3">
+                {dayEvs.length === 0 && (
+                  <div
+                    className={`rounded-2xl border border-dashed p-8 text-center text-sm font-bold ${T.cardSubtle} ${T.muted}`}
+                  >
+                    Open day · Tap + Add block
+                  </div>
+                )}
+                {dayEvs.map((ev, idx) => {
+                  const domId = mapCategoryToDomain(ev.category);
+                  const d = getDom(domId, isDark);
+                  const done = completionMap.get(`${ev.id}__${selectedDate}`)?.status === 'COMPLETED';
+                  const prevEv = idx > 0 ? dayEvs[idx - 1] : null;
+                  const gapMin =
+                    prevEv && ev.start_time && prevEv.start_time
+                      ? timeToMin(ev.start_time) -
+                        (timeToMin(prevEv.start_time) + (prevEv.duration_min ?? 30))
+                      : 0;
 
-                        return (
-                          <button
-                            key={date}
-                            type="button"
-                            onClick={() => {
-                              setSelectedDate(date);
-                              setView('TIMELINE');
-                            }}
-                            className={`flex min-h-0 min-w-0 flex-col items-start gap-1.5 overflow-hidden px-3 py-2 text-left transition-colors ${
-                              inMonth
-                                ? 'bg-[var(--surface)] hover:bg-[var(--surface-2)] dark:bg-[#14161a] dark:hover:bg-[#1a1d23]'
-                                : 'bg-[var(--surface-2)]/75 text-[var(--faint)] hover:bg-[var(--surface-2)] dark:bg-[#23262d] dark:hover:bg-[#292d35]'
-                            }`}
+                  return (
+                    <div key={`${ev.id}-${selectedDate}`} className="space-y-3">
+                      {gapMin >= 15 && (
+                        <div className="flex items-center gap-3 py-1">
+                          <div className={`h-[1px] flex-1 ${isDark ? 'bg-[#242424]' : 'bg-[#E5E7EB]'}`} />
+                          <span
+                            className={`rounded-full border px-3 py-1 text-[11px] font-extrabold tabular-nums ${T.cardSubtle} ${T.muted}`}
                           >
-                            <strong
-                              className={`grid h-6 w-6 shrink-0 place-items-center rounded-[7px] font-mono text-[13px] font-bold ${
-                                isToday
-                                  ? 'bg-[var(--blue)] text-white'
-                                  : inMonth
-                                    ? 'text-[var(--ink)]'
-                                    : 'text-[var(--faint)]'
+                            {fmtGap(gapMin)}
+                          </span>
+                          <div className={`h-[1px] flex-1 ${isDark ? 'bg-[#242424]' : 'bg-[#E5E7EB]'}`} />
+                        </div>
+                      )}
+                      <div
+                        className={`flex items-center justify-between gap-4 rounded-2xl border p-4 ${
+                          done
+                            ? isDark
+                              ? 'border-[#34D399]/30 bg-[#10B981]/10'
+                              : 'border-[#A7F3D0] bg-[#ECFDF5]/60'
+                            : T.card
+                        }`}
+                      >
+                        <div className="flex min-w-0 flex-1 items-center gap-4">
+                          <div
+                            className={`flex h-14 w-14 shrink-0 items-center justify-center rounded-2xl border ${d.soft} ${d.border} ${d.text}`}
+                          >
+                            <DuoIcon name={domId} className="h-8 w-8" />
+                          </div>
+                          <div className="min-w-0">
+                            <div className="flex flex-wrap items-center gap-2">
+                              <span
+                                className={`rounded-lg border px-2.5 py-0.5 text-xs font-extrabold tabular-nums ${T.cardSubtle} ${T.text}`}
+                              >
+                                {fmtTime12(ev.start_time)}
+                              </span>
+                              <span
+                                className={`rounded-lg px-2.5 py-0.5 text-xs font-extrabold ${d.soft} ${d.text}`}
+                              >
+                                {d.label} · {ev.duration_min ?? 30}m
+                              </span>
+                            </div>
+                            <h3
+                              className={`mt-1 font-display text-base font-extrabold sm:text-lg ${
+                                done ? `line-through ${T.muted}` : T.text
                               }`}
                             >
-                              {Number(date.slice(8))}
-                            </strong>
-
-                            {dayItems.length > 0 && (
-                              <div className="flex flex-wrap items-center gap-1">
-                                {dayItems.slice(0, 4).map((item) => (
-                                  <i
-                                    key={item.id}
-                                    className="inline-block h-1.5 w-1.5 rounded-full"
-                                    style={{ backgroundColor: CATEGORY_COLORS[item.category] }}
-                                  />
-                                ))}
-                                {dayItems.length > 4 && (
-                                  <small className="font-mono text-[9.5px] font-semibold text-[var(--muted)]">
-                                    +{dayItems.length - 4}
-                                  </small>
-                                )}
-                              </div>
-                            )}
-
-                            {dayItems.length > 0 && (
-                              <div className="w-full truncate text-[10.5px] font-semibold text-[var(--muted)]">
-                                {dayItems[0].title}
-                                {dayItems.length > 1 ? ` +${dayItems.length - 1}` : ''}
-                              </div>
-                            )}
+                              {ev.title}
+                            </h3>
+                          </div>
+                        </div>
+                        <div className="flex shrink-0 items-center gap-2">
+                          <button
+                            type="button"
+                            onClick={() =>
+                              setBlockModal({ open: true, block: ev, defaultDate: selectedDate })
+                            }
+                            className={`cursor-pointer rounded-xl px-3 py-2 text-xs font-extrabold ${T.btnNeutral}`}
+                          >
+                            Edit
                           </button>
-                        );
-                      })}
+                          <button
+                            type="button"
+                            onClick={(e) => void handleToggleDone(ev, selectedDate, e)}
+                            className={`cursor-pointer rounded-xl px-3.5 py-2 font-display text-xs font-bold ${
+                              done ? T.btnSuccess : T.btnNeutral
+                            }`}
+                          >
+                            {done ? '✓ Done' : 'Done'}
+                          </button>
+                        </div>
+                      </div>
                     </div>
-                  </div>
-                </div>
-              );
-            })()
-          ) : (
-            (() => {
-              const allAgendaItems = rangeTimelines.flatMap((dt) => [
-                ...dt.allDayItems,
-                ...dt.timedItems,
-              ]);
-              const completedCount = allAgendaItems.filter((i) => i.isCompleted).length;
-              const plannedCount = Math.max(0, allAgendaItems.length - completedCount);
-              const activeDays = rangeTimelines.filter(
-                (dt) => dt.allDayItems.length + dt.timedItems.length > 0
-              ).length;
+                  );
+                })}
+              </div>
+            </div>
+          </div>
+        );
+      })()}
 
+      {/* MONTH VIEW — VERTICAL-FIRST THEN HORIZONTAL PILL STACKING */}
+      {calView === 'month' && (
+        <div className={`space-y-3 rounded-3xl border p-4 sm:p-6 ${T.card}`}>
+          <div className="grid grid-cols-7 gap-2 text-center">
+            {['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'].map((h) => (
+              <div
+                key={h}
+                className={`pb-1 text-[11px] font-extrabold uppercase tracking-wider ${T.muted}`}
+              >
+                {h}
+              </div>
+            ))}
+          </div>
+          <div className="grid grid-cols-7 gap-1.5 sm:gap-2">
+            {monthCells.map((iso) => {
+              const inMonth = iso.startsWith(monthPrefix);
+              const isToday = iso === today;
+              const evs = getBlocksForDate(iso);
               return (
-                <div className="min-h-0 flex-1 overflow-y-auto bg-[var(--bg)] p-4 sm:p-6">
-                  <div className="mx-auto max-w-4xl space-y-4">
-                    {/* Plane-inspired Compact Workload Summary Strip */}
-                    <div className="grid grid-cols-3 gap-2.5">
-                      <div className="rounded-xl border border-[var(--line)] bg-[var(--surface)] px-4 py-3">
-                        <div className="flex items-center gap-2 text-[11px] font-medium text-[var(--muted)]">
-                          <span className="h-2 w-2 rounded-[2px] bg-[var(--blue)]" />
-                          <span>Scheduled</span>
-                        </div>
-                        <div className="mt-1 font-mono text-[18px] font-bold text-[var(--ink)] tabular-nums">
-                          {plannedCount}
-                        </div>
-                      </div>
-                      <div className="rounded-xl border border-[var(--line)] bg-[var(--surface)] px-4 py-3">
-                        <div className="flex items-center gap-2 text-[11px] font-medium text-[var(--muted)]">
-                          <span className="h-2 w-2 rounded-[2px] bg-[#2D9D87]" />
-                          <span>Completed</span>
-                        </div>
-                        <div className="mt-1 font-mono text-[18px] font-bold text-[var(--ink)] tabular-nums">
-                          {completedCount}
-                        </div>
-                      </div>
-                      <div className="rounded-xl border border-[var(--line)] bg-[var(--surface)] px-4 py-3">
-                        <div className="flex items-center gap-2 text-[11px] font-medium text-[var(--muted)]">
-                          <span className="h-2 w-2 rounded-[2px] bg-[#D58D38]" />
-                          <span>Active days</span>
-                        </div>
-                        <div className="mt-1 font-mono text-[18px] font-bold text-[var(--ink)] tabular-nums">
-                          {activeDays} / 14
-                        </div>
-                      </div>
-                    </div>
-
-                    {allAgendaItems.length === 0 ? (
-                      <EmptyState
-                        icon={<CalendarDays className="h-5 w-5" />}
-                        title="No scheduled items in this 14-day window"
-                        description="Add a commitment or seed your recurring templates from the top bar."
-                      />
-                    ) : (
-                      <div className="overflow-hidden rounded-xl border border-[var(--line)] bg-[var(--surface)]">
-                        {rangeTimelines.map((dt) => {
-                          const items = [...dt.allDayItems, ...dt.timedItems];
-                          if (items.length === 0) return null;
-                          return (
-                            <div
-                              key={dt.dateStr}
-                              className="border-b border-[var(--line)] last:border-b-0"
-                            >
-                              <div className="flex items-center justify-between border-b border-[var(--line)] bg-[var(--surface-2)]/60 px-4 py-2">
-                                <div className="flex items-center gap-2">
-                                  <span className="font-mono text-[12px] font-bold text-[var(--ink)]">
-                                    {dt.dateStr}
-                                  </span>
-                                  {dt.dateStr === today && (
-                                    <span className="rounded-[5px] bg-[var(--blue-lite)] px-1.5 py-0.5 font-mono text-[9.5px] font-bold text-[var(--blue-ink)]">
-                                      TODAY
-                                    </span>
-                                  )}
-                                </div>
-                                <span className="font-mono text-[10.5px] text-[var(--muted)]">
-                                  {items.length} item{items.length === 1 ? '' : 's'}
-                                </span>
-                              </div>
-
-                              <div className="divide-y divide-[var(--line)]">
-                                {items.map((item) => (
-                                  <div
-                                    key={`${dt.dateStr}-${item.id}`}
-                                    className="flex flex-wrap items-center justify-between gap-3 px-4 py-2.5 transition-colors hover:bg-[var(--surface-2)]/50"
-                                  >
-                                    <div className="flex min-w-0 items-center gap-3">
-                                      <CategoryMark category={item.category} size="sm" />
-                                      <span className="w-[52px] shrink-0 font-mono text-[11px] text-[var(--muted)]">
-                                        {item.startMin !== null
-                                          ? formatMinutesToTime(item.startMin)
-                                          : 'All-day'}
-                                      </span>
-                                      <div className="min-w-0">
-                                        <div
-                                          className={`truncate text-[13px] font-semibold text-[var(--ink)] ${
-                                            item.isCompleted ? 'line-through opacity-55' : ''
-                                          }`}
-                                        >
-                                          {item.title}
-                                        </div>
-                                        <div className="truncate text-[11px] text-[var(--muted)]">
-                                          {CATEGORY_SHORT_LABELS[item.category]}
-                                          {item.subtitle ? ` · ${item.subtitle}` : ''}
-                                        </div>
-                                      </div>
-                                    </div>
-
-                                    {item.recordedRun ? (
-                                      <Link
-                                        to={`/runs/${item.recordedRun.id}`}
-                                        className="rounded-md border border-[var(--line)] px-2.5 py-1 text-[11.5px] font-semibold text-[var(--blue)] hover:bg-[var(--blue-lite)]"
-                                      >
-                                        Open Run
-                                      </Link>
-                                    ) : item.block ? (
-                                      <div className="flex items-center gap-1.5">
-                                        <button
-                                          type="button"
-                                          onClick={() => openEditBlockModal(item.block!)}
-                                          className="rounded-md border border-[var(--line)] bg-[var(--surface)] px-2.5 py-1 text-[11px] font-semibold text-[var(--ink)] transition-colors hover:bg-[var(--surface-2)]"
-                                        >
-                                          Edit
-                                        </button>
-                                        <button
-                                          type="button"
-                                          onClick={() => void handleDeleteBlock(item.block!.id)}
-                                          aria-label={`Delete ${item.title}`}
-                                          className="rounded-md border border-[var(--line)] p-1.5 text-[var(--muted)] transition-colors hover:bg-red-500/10 hover:text-red-600 dark:hover:text-red-400"
-                                        >
-                                          <Trash2 className="h-3.5 w-3.5" />
-                                        </button>
-                                      </div>
-                                    ) : null}
-                                  </div>
-                                ))}
-                              </div>
-                            </div>
-                          );
-                        })}
-                      </div>
+                <button
+                  key={iso}
+                  type="button"
+                  onClick={() => {
+                    setSelectedDate(iso);
+                    setWeekStart(getMondayWeekStart(iso));
+                    setCalView('day');
+                  }}
+                  className={`flex min-h-[118px] cursor-pointer flex-col justify-between overflow-hidden rounded-2xl border p-2.5 text-left transition-all active:scale-[0.99] sm:min-h-[128px] ${
+                    isToday
+                      ? isDark
+                        ? 'border-[#3B82F6] bg-[#2563EB]/15'
+                        : 'border-[#2563EB] bg-[#EFF6FF]/80'
+                      : inMonth
+                        ? `${T.cardSubtle} ${T.surfaceHover}`
+                        : 'border-transparent opacity-35'
+                  }`}
+                >
+                  <div className="mb-1.5 flex w-full items-center justify-between">
+                    <span
+                      className={`font-display text-xs font-extrabold tabular-nums sm:text-sm ${
+                        isToday ? (isDark ? 'text-[#60A5FA]' : 'text-[#2563EB]') : T.text
+                      }`}
+                    >
+                      {Number(iso.slice(8))}
+                    </span>
+                    {evs.length > 0 && (
+                      <span className={`text-[10px] font-extrabold tabular-nums ${T.muted}`}>
+                        {evs.length}
+                      </span>
                     )}
                   </div>
+
+                  {/* Stack vertically first (3 rows), then flow horizontally */}
+                  <div className="grid w-full auto-cols-max grid-flow-col grid-rows-3 content-start items-start gap-1 overflow-x-hidden">
+                    {evs.slice(0, 6).map((ev) => {
+                      const domId = mapCategoryToDomain(ev.category);
+                      const d = getDom(domId, isDark);
+                      const done = completionMap.get(`${ev.id}__${iso}`)?.status === 'COMPLETED';
+                      return (
+                        <span
+                          key={`${ev.id}-${iso}`}
+                          className={`inline-flex items-center whitespace-nowrap rounded-md border px-1.5 py-0.5 text-[10px] font-extrabold leading-tight ${d.soft} ${d.border} ${d.text} ${
+                            done ? 'line-through opacity-60' : ''
+                          }`}
+                        >
+                          <span className="hidden sm:inline">{pillShortName(ev.title)}</span>
+                          <span className={`h-2 w-2 rounded-full sm:hidden ${d.bg}`} />
+                        </span>
+                      );
+                    })}
+                  </div>
+                </button>
+              );
+            })}
+          </div>
+        </div>
+      )}
+
+      {/* AGENDA VIEW */}
+      {calView === 'agenda' && (
+        <div className="space-y-5">
+          <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
+            {[
+              { label: 'Scheduled', val: agendaTotalBlocks, icon: 'running' as const, domId: 'running' as DomainId },
+              { label: 'Completed', val: agendaDoneBlocks, icon: 'reading' as const, domId: 'reading' as DomainId },
+              { label: 'Active Days', val: agendaActiveDays, icon: 'flame' as const, domId: 'karate' as DomainId },
+            ].map((kpi) => {
+              const d = getDom(kpi.domId, isDark);
+              return (
+                <div key={kpi.label} className={`flex items-center gap-4 rounded-3xl border p-5 ${T.card}`}>
+                  <div
+                    className={`flex h-14 w-14 items-center justify-center rounded-2xl border ${d.soft} ${d.border} ${d.text}`}
+                  >
+                    <DuoIcon name={kpi.icon} className="h-8 w-8" />
+                  </div>
+                  <div>
+                    <span className={`text-[11px] font-extrabold uppercase tracking-wider ${T.muted}`}>
+                      {kpi.label}
+                    </span>
+                    <div className={`font-display text-3xl font-extrabold tabular-nums ${T.text}`}>
+                      {kpi.val}
+                    </div>
+                  </div>
                 </div>
               );
-            })()
-          )}
+            })}
+          </div>
+
+          {(() => {
+            const isCurrentWeek = weekDates.includes(today);
+            const upcomingDates = isCurrentWeek
+              ? weekDates.filter((iso) => iso >= today)
+              : weekDates;
+            const pastDates = isCurrentWeek
+              ? weekDates.filter((iso) => iso < today && getBlocksForDate(iso).length > 0)
+              : [];
+
+            const renderAgendaDay = (iso: string) => {
+              const evs = getBlocksForDate(iso);
+              if (evs.length === 0) return null;
+              const isToday = iso === today;
+              return (
+                <div
+                  key={iso}
+                  className={`space-y-3 rounded-3xl border p-5 ${
+                    isToday
+                      ? isDark
+                        ? 'border-[#3B82F6] bg-[#101010]'
+                        : 'border-[#2563EB] bg-white'
+                      : T.card
+                  }`}
+                >
+                  <div className={`flex items-center justify-between border-b pb-2 ${T.divider}`}>
+                    <div className="flex items-center gap-2">
+                      <span
+                        className={`font-display text-base font-extrabold ${
+                          isToday ? (isDark ? 'text-[#60A5FA]' : 'text-[#2563EB]') : T.text
+                        }`}
+                      >
+                        {fmtDate(iso).full}
+                      </span>
+                      {isToday && (
+                        <span className="rounded-lg bg-[#2563EB] px-2 py-0.5 text-[10px] font-extrabold uppercase text-white">
+                          Today
+                        </span>
+                      )}
+                    </div>
+                    <span className={`text-xs font-extrabold tabular-nums ${T.muted}`}>
+                      {evs.length} blocks
+                    </span>
+                  </div>
+                  <div className="space-y-2">
+                    {evs.map((ev) => {
+                      const domId = mapCategoryToDomain(ev.category);
+                      const d = getDom(domId, isDark);
+                      const done = completionMap.get(`${ev.id}__${iso}`)?.status === 'COMPLETED';
+                      return (
+                        <div
+                          key={`${ev.id}-${iso}`}
+                          className={`flex items-center justify-between gap-3 rounded-2xl border p-3 ${T.cardSubtle}`}
+                        >
+                          <div className="flex min-w-0 items-center gap-3">
+                            <button
+                              type="button"
+                              onClick={(e) => void handleToggleDone(ev, iso, e)}
+                              className={`flex h-7 w-7 shrink-0 cursor-pointer items-center justify-center rounded-xl border text-xs font-extrabold ${
+                                done
+                                  ? 'border-transparent bg-[#059669] text-white'
+                                  : `${T.card} text-transparent hover:border-[#10B981]`
+                              }`}
+                            >
+                              ✓
+                            </button>
+                            <span
+                              className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-xl ${d.soft} ${d.text}`}
+                            >
+                              <DuoIcon name={domId} className="h-5 w-5" />
+                            </span>
+                            <div className="min-w-0">
+                              <div
+                                className={`truncate font-display text-sm font-bold ${
+                                  done ? `line-through ${T.muted}` : T.text
+                                }`}
+                              >
+                                {ev.title}
+                              </div>
+                              <span className={`text-[11px] font-bold tabular-nums ${T.muted}`}>
+                                {fmtTime12(ev.start_time)} · {ev.duration_min ?? 30}m
+                              </span>
+                            </div>
+                          </div>
+                          <button
+                            type="button"
+                            onClick={() =>
+                              setBlockModal({ open: true, block: ev, defaultDate: iso })
+                            }
+                            className={`cursor-pointer rounded-xl px-3 py-1.5 text-xs font-extrabold ${T.btnWhite}`}
+                          >
+                            Edit
+                          </button>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+              );
+            };
+
+            return (
+              <div className="space-y-4">
+                {upcomingDates.map(renderAgendaDay)}
+                {pastDates.length > 0 && (
+                  <div className="space-y-3 pt-2">
+                    <button
+                      type="button"
+                      onClick={() => setShowPastAgenda((v) => !v)}
+                      className={`cursor-pointer rounded-xl px-4 py-2 text-xs font-extrabold ${T.btnNeutral}`}
+                    >
+                      {showPastAgenda
+                        ? `Hide earlier this week (${pastDates.length})`
+                        : `Show earlier this week (${pastDates.length})`}
+                    </button>
+                    {showPastAgenda && pastDates.map(renderAgendaDay)}
+                  </div>
+                )}
+              </div>
+            );
+          })()}
         </div>
-      </div>
-      {showBlockModal && user && (
-        <ScheduleBlockModal
-          initialBlock={modalInitialBlock}
-          defaultDate={selectedDate}
-          onClose={() => {
-            setShowBlockModal(false);
-            setModalInitialBlock(null);
-            setEditingBlockId(null);
-          }}
-          onSave={async (draft) => {
-            if (editingBlockId) {
-              await updateScheduleBlock(user.id, editingBlockId, draft);
-            } else {
-              await createScheduleBlock(user.id, draft);
-            }
-            await loadData();
-          }}
+      )}
+
+      {/* Modals & Drawers */}
+      {blockModal.open && (
+        <V2BlockModal
+          isDark={isDark}
+          block={blockModal.block}
+          defaultDate={blockModal.defaultDate}
+          saving={savingBlock}
+          onClose={() => setBlockModal({ open: false, block: null, defaultDate: selectedDate })}
+          onSave={handleSaveBlock}
+          onDelete={handleDeleteBlock}
         />
       )}
 
-      {showReadinessModal && user && (
-        <ReadinessCheckInModal
-          initialCheckIn={todayCheckIn}
-          defaultDate={today}
-          onClose={() => setShowReadinessModal(false)}
-          onSave={async (draft) => {
-            await upsertReadinessCheckIn(user.id, draft);
-            await loadData();
-          }}
+      {inboxOpen && (
+        <V2InboxDrawer
+          isDark={isDark}
+          items={inboxBlocks}
+          busyId={inboxBusyId}
+          onClose={() => setInboxOpen(false)}
+          onAdd={handleAddInbox}
+          onScheduleToday={handleScheduleInbox}
+          onDelete={handleDeleteInbox}
+        />
+      )}
+
+      {readinessOpen && (
+        <V2ReadinessModal
+          isDark={isDark}
+          todayIso={today}
+          existing={todayReadiness}
+          saving={savingReadiness}
+          onClose={() => setReadinessOpen(false)}
+          onSave={handleSaveReadiness}
         />
       )}
     </div>

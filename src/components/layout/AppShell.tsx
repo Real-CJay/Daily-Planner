@@ -1,4 +1,4 @@
-﻿import { useState, type ReactNode } from 'react';
+﻿import { useEffect, useState, type ReactNode } from 'react';
 import { Link, useLocation } from 'react-router-dom';
 import {
   Activity,
@@ -7,7 +7,6 @@ import {
   BookOpen,
   Bot,
   CalendarDays,
-  ChevronDown,
   ClipboardCheck,
   Flame,
   HeartPulse,
@@ -18,10 +17,13 @@ import {
   Music,
   Route,
   Settings,
-  Sun,
   type LucideIcon,
 } from 'lucide-react';
-import { StrideBrand } from '@/design-system';
+import '@/styles/v2-tokens.css';
+import { DuoIcon, type DuoIconName } from '@/design-system/DuoIcon';
+import { getDom, getV2Theme, type DomainId } from '@/design-system/v2Theme';
+import { FeedbackProvider, useFeedback } from '@/components/feedback/FeedbackContext';
+import { MonkFocusOverlay } from '@/components/monk/MonkFocusOverlay';
 import { FloatingCoachWidget } from '@/components/coach/FloatingCoachWidget';
 import { SessionReminderManager } from '@/components/reminders/SessionReminderManager';
 import { useAuth } from '@/modules/auth/AuthContext';
@@ -56,12 +58,44 @@ export const NAV_ITEMS: NavItem[] = [
 
 const PRIMARY_ORDER = ['/', '/calendar', '/plan', '/modes'];
 
-export function AppShell({ children }: { children: ReactNode }) {
+const SECONDARY_VISUALS: Record<string, { icon: DuoIconName; domId: DomainId }> = {
+  '/analytics': { icon: 'running', domId: 'running' },
+  '/coach': { icon: 'spark', domId: 'strength' },
+  '/personal-bests': { icon: 'trophy', domId: 'karate' },
+  '/weekly-review': { icon: 'reading', domId: 'reading' },
+  '/settings': { icon: 'recovery', domId: 'health' },
+};
+
+function AppShellInner({
+  isDark,
+  monkOpen,
+  setMonkOpen,
+  children,
+}: {
+  isDark: boolean;
+  monkOpen: boolean;
+  setMonkOpen: (v: boolean) => void;
+  children: ReactNode;
+}) {
   const { pathname } = useLocation();
   const { user, profile, signOut } = useAuth();
-  const { resolvedTheme, toggleTheme } = useTheme();
+  const { toggleTheme } = useTheme();
+  const { triggerConfetti, pushToast } = useFeedback();
   const [moreOpen, setMoreOpen] = useState(false);
   const [profileOpen, setProfileOpen] = useState(false);
+
+  const T = getV2Theme(isDark);
+
+  useEffect(() => {
+    if (!document.getElementById('stride-google-fonts')) {
+      const link = document.createElement('link');
+      link.id = 'stride-google-fonts';
+      link.rel = 'stylesheet';
+      link.href =
+        'https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=Plus+Jakarta+Sans:wght@600;700;800&display=swap';
+      document.head.appendChild(link);
+    }
+  }, []);
 
   const primaryNav = PRIMARY_ORDER.map((path) => NAV_ITEMS.find((i) => i.to === path)).filter(
     (i): i is NavItem => Boolean(i)
@@ -84,81 +118,108 @@ export function AppShell({ children }: { children: ReactNode }) {
   const isCoach = pathname.startsWith('/coach');
 
   return (
-    <div className="min-h-screen bg-[var(--bg)] text-[var(--ink)]">
-      {/* Stride Sticky Top Navigation Bar (76px Studio height) */}
-      <header className="sticky top-0 z-30 h-[76px] border-b border-[var(--line)] bg-[var(--surface)]">
-        <div className="relative mx-auto flex h-full max-w-[1250px] items-center justify-between px-5 sm:px-8">
-          <div className="flex h-full items-center gap-10 lg:gap-16">
+    <div
+      className={`min-h-screen overflow-x-hidden transition-colors duration-200 selection:bg-[#2563EB]/20 selection:text-[#2563EB] ${T.pageBg}`}
+    >
+      {/* V2 Top Navigation Bar */}
+      <header
+        className={`sticky top-0 z-30 border-b backdrop-blur-md transition-colors duration-200 ${T.headerBg}`}
+      >
+        <div className="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8">
+          <div className="flex h-16 items-center justify-between gap-3">
+            {/* Left: stride. Brand Mark */}
             <Link
               to="/"
               aria-label="Go to Overview"
-              className="focus-visible:rounded-lg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--blue)]/50"
+              className="group flex shrink-0 items-center gap-2.5 transition-transform active:scale-[0.98]"
             >
-              <StrideBrand />
+              <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-[#2563EB] transition-colors group-hover:bg-[#1D4ED8]">
+                <DuoIcon name="brand" className="h-5 w-5" />
+              </div>
+              <span className={`font-display text-xl font-extrabold tracking-tight ${T.text}`}>
+                stride<span className="text-[#2563EB]">.</span>
+              </span>
             </Link>
 
-            {/* Primary 4 Tabs (Overview, Calendar, Plan, Modes) + More */}
-            <nav aria-label="Main navigation" className="hidden h-full items-center gap-8 md:flex">
+            {/* Center: Pill Navigation + More Dropdown */}
+            <nav
+              aria-label="Main navigation"
+              className={`hidden items-center gap-1 rounded-2xl border p-1 md:flex ${T.cardSubtle}`}
+            >
               {primaryNav.map((item) => {
                 const active = item.to === '/modes' ? isModeActive : isActive(item.to);
                 return (
                   <Link
                     key={item.to}
                     to={item.to}
-                    className={`relative flex h-full items-center text-[14px] font-semibold transition-colors ${
+                    onClick={() => {
+                      setMoreOpen(false);
+                      setProfileOpen(false);
+                    }}
+                    className={`rounded-xl px-4 py-1.5 text-sm font-bold transition-all active:scale-[0.98] ${
                       active
-                        ? 'text-[var(--ink)]'
-                        : 'text-[var(--muted)] hover:text-[var(--ink)]'
+                        ? isDark
+                          ? 'bg-[#242424] text-[#F5F5F5]'
+                          : 'bg-white text-[#0F172A] shadow-sm'
+                        : `${T.muted} hover:${T.text}`
                     }`}
                   >
                     {item.label}
-                    {active && (
-                      <span className="absolute inset-x-0 bottom-0 h-[3px] rounded-t-[3px] bg-[var(--ink)]" />
-                    )}
                   </Link>
                 );
               })}
 
-              {/* Secondary Tools Dropdown */}
-              <div className="relative flex h-full items-center">
+              {/* More ▾ Dropdown */}
+              <div className="relative">
                 <button
                   type="button"
                   onClick={() => {
                     setMoreOpen((v) => !v);
                     setProfileOpen(false);
                   }}
-                  className={`relative flex h-full items-center gap-1 text-[14px] font-semibold transition-colors ${
+                  className={`flex cursor-pointer items-center gap-1 rounded-xl px-3.5 py-1.5 text-sm font-bold transition-all active:scale-[0.98] ${
                     isSecondaryActive
-                      ? 'text-[var(--ink)]'
-                      : 'text-[var(--muted)] hover:text-[var(--ink)]'
+                      ? isDark
+                        ? 'bg-[#242424] text-[#60A5FA]'
+                        : 'bg-white text-[#2563EB] shadow-sm'
+                      : `${T.muted} hover:${T.text}`
                   }`}
                 >
                   <span>More</span>
-                  <ChevronDown className="h-3.5 w-3.5 opacity-75" />
-                  {isSecondaryActive && (
-                    <span className="absolute inset-x-0 bottom-0 h-[3px] rounded-t-[3px] bg-[var(--ink)]" />
-                  )}
+                  <span className="text-xs">▾</span>
                 </button>
 
                 {moreOpen && (
                   <>
                     <div className="fixed inset-0 z-30" onClick={() => setMoreOpen(false)} />
-                    <div className="absolute left-0 top-[68px] z-40 w-52 rounded-2xl border border-[var(--line)] bg-[var(--surface)] p-1.5 shadow-[var(--shadow)]">
+                    <div
+                      className={`animate-pop absolute right-0 z-40 mt-2.5 w-52 rounded-2xl border p-1.5 shadow-xl ${T.card}`}
+                    >
                       {secondaryNav.map((item) => {
-                        const Icon = item.icon;
+                        const vis = SECONDARY_VISUALS[item.to] ?? {
+                          icon: 'spark' as DuoIconName,
+                          domId: 'running' as DomainId,
+                        };
+                        const d = getDom(vis.domId, isDark);
                         const active = isActive(item.to);
                         return (
                           <Link
                             key={item.to}
                             to={item.to}
                             onClick={() => setMoreOpen(false)}
-                            className={`flex items-center gap-2.5 rounded-xl px-3 py-2 text-[13px] font-medium transition-colors ${
+                            className={`flex w-full items-center gap-2.5 rounded-xl px-3 py-2.5 text-sm font-bold transition-colors active:scale-[0.98] ${
                               active
-                                ? 'bg-[var(--blue-lite)] font-semibold text-[var(--blue-ink)]'
-                                : 'text-[var(--ink)] hover:bg-[var(--surface-2)]'
+                                ? isDark
+                                  ? 'bg-[#2563EB]/20 text-[#60A5FA]'
+                                  : 'bg-[#EFF6FF] text-[#2563EB]'
+                                : `${T.text} ${T.surfaceHover}`
                             }`}
                           >
-                            <Icon className="h-4 w-4 shrink-0 opacity-80" />
+                            <span
+                              className={`flex h-7 w-7 items-center justify-center rounded-lg ${d.soft} ${d.text}`}
+                            >
+                              <DuoIcon name={vis.icon} className="h-4 w-4" />
+                            </span>
                             <span>{item.label}</span>
                           </Link>
                         );
@@ -168,110 +229,135 @@ export function AppShell({ children }: { children: ReactNode }) {
                 )}
               </div>
             </nav>
-          </div>
 
-          {/* Right Utility Actions */}
-          <div className="flex items-center gap-3">
-            <span className="hidden text-[10px] font-bold uppercase tracking-[0.11em] text-[var(--faint)] lg:inline">
-              {TRAINING_PHASE_LABELS[activePhase]}
-            </span>
+            {/* Right: Phase Pill, Monk Focus, Theme Switch, Profile */}
+            <div className="relative flex shrink-0 items-center gap-2">
+              <Link
+                to="/settings"
+                className={`hidden items-center gap-1.5 rounded-xl px-3 py-1.5 text-xs font-extrabold tracking-wide lg:inline-flex ${T.btnNeutral}`}
+              >
+                <span className="h-2 w-2 rounded-full bg-[#2563EB]" />
+                {TRAINING_PHASE_LABELS[activePhase]}
+              </Link>
 
-            <button
-              type="button"
-              onClick={toggleTheme}
-              title={`Switch to ${resolvedTheme === 'light' ? 'dark' : 'light'} mode`}
-              aria-label="Switch theme"
-              className="flex h-9 w-9 items-center justify-center rounded-xl border border-[var(--line)] bg-[var(--surface)] text-[var(--muted)] transition-colors hover:bg-[var(--surface-2)] hover:text-[var(--ink)]"
-            >
-              {resolvedTheme === 'light' ? (
-                <Moon className="h-[18px] w-[18px]" />
-              ) : (
-                <Sun className="h-[18px] w-[18px]" />
-              )}
-            </button>
-
-            <div className="relative">
               <button
                 type="button"
-                onClick={() => {
-                  setProfileOpen((v) => !v);
-                  setMoreOpen(false);
-                }}
-                title={displayName}
-                aria-label="Open profile menu"
-                className="flex h-9 w-9 items-center justify-center rounded-full bg-[var(--blue-lite)] text-[13px] font-extrabold text-[var(--blue-ink)] transition-opacity hover:opacity-90"
+                onClick={() => setMonkOpen(true)}
+                title="Monk Focus Timer"
+                className={`inline-flex cursor-pointer items-center gap-1.5 rounded-xl px-3 py-2 text-xs font-extrabold transition-all active:scale-[0.98] ${
+                  isDark
+                    ? 'border border-[#818CF8]/30 bg-[#4F46E5]/15 text-[#818CF8] hover:bg-[#4F46E5]/25'
+                    : 'border border-[#C7D2FE] bg-[#EEF2FF] text-[#4F46E5] hover:bg-[#E0E7FF]'
+                }`}
               >
-                {initial}
+                <DuoIcon name="monk" className="h-4 w-4" />
+                <span className="hidden sm:inline">Monk</span>
               </button>
 
-              {profileOpen && (
-                <>
-                  <div className="fixed inset-0 z-30" onClick={() => setProfileOpen(false)} />
-                  <div className="absolute right-0 top-[54px] z-40 w-60 rounded-2xl border border-[var(--line)] bg-[var(--surface)] p-4 shadow-[var(--shadow)]">
-                    <div className="truncate text-[13px] font-bold text-[var(--ink)]">
-                      {displayName}
-                    </div>
-                    <div className="mt-0.5 truncate text-[12px] text-[var(--muted)]">
-                      {user?.email}
-                    </div>
-                    <div className="mt-2 inline-flex items-center gap-1.5 rounded-md bg-[var(--surface-2)] px-2 py-1 font-mono text-[10px] font-semibold text-[var(--muted)]">
-                      {tz} · {TRAINING_PHASE_LABELS[activePhase]}
-                    </div>
+              <button
+                type="button"
+                onClick={toggleTheme}
+                aria-label="Toggle theme"
+                title={isDark ? 'Switch to Light Mode' : 'Switch to Dark Mode'}
+                className={`flex h-9 w-9 cursor-pointer items-center justify-center rounded-xl ${T.btnWhite}`}
+              >
+                <DuoIcon
+                  name={isDark ? 'sun' : 'moon'}
+                  className={`h-4 w-4 ${isDark ? 'text-[#FBBF24]' : 'text-[#4F46E5]'}`}
+                />
+              </button>
 
-                    <div className="mt-3 space-y-0.5 border-t border-[var(--line)] pt-2.5 md:hidden">
-                      {secondaryNav.map((item) => {
-                        const Icon = item.icon;
-                        return (
-                          <Link
-                            key={item.to}
-                            to={item.to}
-                            onClick={() => setProfileOpen(false)}
-                            className="flex items-center gap-2 rounded-lg px-2 py-1.5 text-[12px] font-medium text-[var(--ink)] hover:bg-[var(--surface-2)]"
-                          >
-                            <Icon className="h-3.5 w-3.5 text-[var(--muted)]" />
-                            <span>{item.label}</span>
-                          </Link>
-                        );
-                      })}
-                    </div>
+              <div className="relative">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setProfileOpen((v) => !v);
+                    setMoreOpen(false);
+                  }}
+                  title={displayName}
+                  aria-label="Open profile menu"
+                  className={`flex h-9 w-9 cursor-pointer items-center justify-center rounded-xl font-display text-xs font-extrabold transition-all active:scale-[0.98] ${
+                    isDark
+                      ? 'border border-[#3B82F6]/30 bg-[#2563EB]/20 text-[#60A5FA]'
+                      : 'border border-[#BFDBFE] bg-[#EFF6FF] text-[#2563EB]'
+                  }`}
+                >
+                  {initial}
+                </button>
 
-                    <div className="mt-3 flex flex-col gap-1.5 border-t border-[var(--line)] pt-3">
-                      <Link
-                        to="/settings"
-                        onClick={() => setProfileOpen(false)}
-                        className="flex items-center gap-2 rounded-lg border border-[var(--line)] bg-[var(--surface-2)] px-3 py-2 text-[12px] font-semibold text-[var(--ink)] hover:opacity-90"
+                {profileOpen && (
+                  <>
+                    <div className="fixed inset-0 z-30" onClick={() => setProfileOpen(false)} />
+                    <div
+                      className={`animate-pop absolute right-0 top-12 z-40 w-64 rounded-2xl border p-4 shadow-xl ${T.card}`}
+                    >
+                      <div className={`truncate font-display text-sm font-extrabold ${T.text}`}>
+                        {displayName}
+                      </div>
+                      <div className={`mt-0.5 truncate text-xs font-medium ${T.muted}`}>
+                        {user?.email}
+                      </div>
+                      <div
+                        className={`mt-2 inline-flex items-center gap-1.5 rounded-lg border px-2 py-1 text-[10px] font-extrabold ${T.cardSubtle} ${T.muted}`}
                       >
-                        <Settings className="h-3.5 w-3.5" />
-                        <span>Settings</span>
-                      </Link>
-                      <button
-                        type="button"
-                        onClick={() => {
-                          setProfileOpen(false);
-                          void signOut();
-                        }}
-                        className="flex items-center gap-2 rounded-lg px-3 py-2 text-left text-[12px] font-semibold text-[var(--muted)] hover:bg-[var(--surface-2)] hover:text-[var(--ink)]"
-                      >
-                        <LogOut className="h-3.5 w-3.5" />
-                        <span>Sign out</span>
-                      </button>
+                        {tz} · {TRAINING_PHASE_LABELS[activePhase]}
+                      </div>
+
+                      <div className={`mt-3 space-y-0.5 border-t pt-2.5 md:hidden ${T.divider}`}>
+                        {secondaryNav.map((item) => {
+                          const Icon = item.icon;
+                          return (
+                            <Link
+                              key={item.to}
+                              to={item.to}
+                              onClick={() => setProfileOpen(false)}
+                              className={`flex items-center gap-2 rounded-xl px-2.5 py-2 text-xs font-bold ${T.text} ${T.surfaceHover}`}
+                            >
+                              <Icon className="h-3.5 w-3.5 opacity-70" />
+                              <span>{item.label}</span>
+                            </Link>
+                          );
+                        })}
+                      </div>
+
+                      <div className={`mt-3 flex flex-col gap-1.5 border-t pt-3 ${T.divider}`}>
+                        <Link
+                          to="/settings"
+                          onClick={() => setProfileOpen(false)}
+                          className={`flex items-center gap-2 rounded-xl px-3 py-2 text-xs font-bold ${T.btnNeutral}`}
+                        >
+                          <Settings className="h-3.5 w-3.5" />
+                          <span>Settings</span>
+                        </Link>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setProfileOpen(false);
+                            void signOut();
+                          }}
+                          className={`flex cursor-pointer items-center gap-2 rounded-xl px-3 py-2 text-left text-xs font-bold ${T.btnDangerSoft}`}
+                        >
+                          <LogOut className="h-3.5 w-3.5" />
+                          <span>Sign out</span>
+                        </button>
+                      </div>
                     </div>
-                  </div>
-                </>
-              )}
+                  </>
+                )}
+              </div>
             </div>
           </div>
         </div>
       </header>
 
-      {/* Main Content: Viewport-Locked ONLY for Calendar & Coach; Spacious Studio Padding for Others */}
+      {/* Main Content */}
       <main
         className={
           isCalendar
-            ? 'flex h-[calc(100vh-76px)] w-full flex-col overflow-hidden pb-[72px] md:pb-0'
+            ? 'mx-auto flex min-h-[calc(100vh-64px)] w-full max-w-7xl flex-col px-4 pb-24 pt-6 sm:px-6 lg:px-8'
             : isCoach
-              ? 'mx-auto flex h-[calc(100vh-76px)] w-full max-w-[1248px] flex-col overflow-hidden px-4 pb-[76px] pt-3 sm:px-6 md:pb-4'
-              : 'mx-auto min-h-[calc(100vh-76px)] w-full max-w-[1248px] px-5 pb-28 pt-10 sm:px-8 sm:pt-12 md:pb-16'
+              ? 'mx-auto flex h-[calc(100vh-64px)] w-full max-w-7xl flex-col overflow-hidden px-4 pb-[76px] pt-4 sm:px-6 md:pb-6 lg:px-8'
+              : 'mx-auto min-h-[calc(100vh-64px)] w-full max-w-7xl px-4 pb-28 pt-6 sm:px-6 sm:pt-8 lg:px-8'
         }
       >
         {children}
@@ -280,10 +366,21 @@ export function AppShell({ children }: { children: ReactNode }) {
       <SessionReminderManager />
       <FloatingCoachWidget />
 
-      {/* Mobile Bottom Navigation (4 Primary Tabs) */}
+      {monkOpen && (
+        <MonkFocusOverlay
+          isDark={isDark}
+          onClose={() => setMonkOpen(false)}
+          onFinish={(label) => {
+            triggerConfetti();
+            pushToast(`${label} session complete!`, '#10B981');
+          }}
+        />
+      )}
+
+      {/* Mobile Bottom Navigation */}
       <nav
         aria-label="Mobile navigation"
-        className="fixed inset-x-0 bottom-0 z-30 grid h-[72px] grid-cols-4 border-t border-[var(--line)] bg-[var(--surface)] px-3 py-2 md:hidden"
+        className={`fixed inset-x-0 bottom-0 z-30 grid h-[70px] grid-cols-4 border-t px-3 py-2 backdrop-blur-md md:hidden ${T.headerBg}`}
       >
         {primaryNav.map((item) => {
           const Icon = item.icon;
@@ -292,10 +389,12 @@ export function AppShell({ children }: { children: ReactNode }) {
             <Link
               key={item.to}
               to={item.to}
-              className={`flex flex-col items-center justify-center gap-1 rounded-xl text-[10px] font-semibold transition-colors ${
+              className={`flex flex-col items-center justify-center gap-1 rounded-xl text-[10px] font-extrabold transition-colors ${
                 active
-                  ? 'bg-[var(--blue-lite)] text-[var(--blue)]'
-                  : 'text-[var(--faint)] hover:text-[var(--ink)]'
+                  ? isDark
+                    ? 'bg-[#2563EB]/20 text-[#60A5FA]'
+                    : 'bg-[#EFF6FF] text-[#2563EB]'
+                  : T.muted
               }`}
             >
               <Icon className="h-5 w-5" />
@@ -305,5 +404,19 @@ export function AppShell({ children }: { children: ReactNode }) {
         })}
       </nav>
     </div>
+  );
+}
+
+export function AppShell({ children }: { children: ReactNode }) {
+  const { resolvedTheme } = useTheme();
+  const isDark = resolvedTheme === 'dark';
+  const [monkOpen, setMonkOpen] = useState(false);
+
+  return (
+    <FeedbackProvider isDark={isDark} onOpenMonkFocus={() => setMonkOpen(true)}>
+      <AppShellInner isDark={isDark} monkOpen={monkOpen} setMonkOpen={setMonkOpen}>
+        {children}
+      </AppShellInner>
+    </FeedbackProvider>
   );
 }

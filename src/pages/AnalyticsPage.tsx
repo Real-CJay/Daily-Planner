@@ -1,372 +1,427 @@
 ﻿import { useEffect, useMemo, useState } from 'react';
-import { Link } from 'react-router-dom';
-import {
-  Bar,
-  BarChart,
-  CartesianGrid,
-  Line,
-  LineChart,
-  ResponsiveContainer,
-  Tooltip,
-  XAxis,
-  YAxis,
-} from 'recharts';
-import { ArrowRight, Info } from 'lucide-react';
-import { CategoryBadge } from '@/design-system';
-import { formatDurationSeconds, getLocalDateString } from '@/lib/datetime';
+import { DuoIcon } from '@/design-system/DuoIcon';
+import { getDom, getV2Theme, mapCategoryToDomain, type DomainId } from '@/design-system/v2Theme';
 import { useAuth } from '@/modules/auth/AuthContext';
+import { useTheme } from '@/modules/theme/ThemeContext';
+import { getLocalDateString, getMondayWeekStart } from '@/lib/datetime';
+import { addDaysIso, getIsoWeekday } from '@/modules/calendar/scheduleEngine';
+import { listScheduleBlocks, listScheduleCompletions } from '@/modules/calendar/repository';
 import { listRunningSessions } from '@/modules/running/repository';
-import { listScheduleBlocks } from '@/modules/calendar/repository';
-import { formatPace } from '@/modules/running/calculations';
-import {
-  buildPaceProgressionSeries,
-  buildWeeklyVolumeSeries,
-  computeActivitySeparation,
-  computeConsistencySummary,
-} from '@/modules/analytics/analyticsEngine';
-import {
-  WORKOUT_TYPE_LABELS,
-  type RunningSession,
-  type ScheduleBlock,
-  type WorkoutType,
+import { listHabitLogs } from '@/modules/habits/repository';
+import { calculateHabitStreak, PORN_FREE_HABIT_KEY } from '@/modules/habits/streakEngine';
+import { extractReadingEntries } from '@/modules/reading/readingLog';
+import { evaluateMonkModeReport, loadDisciplineStore } from '@/modules/monk/monkEngine';
+import type {
+  HabitLog,
+  RunningSession,
+  ScheduleBlock,
+  ScheduleCompletion,
 } from '@/types/domain';
 
-function formatSecPerKm(secPerKm: number): string {
-  const mins = Math.floor(secPerKm / 60);
-  const secs = Math.round(secPerKm % 60);
-  return `${mins}:${String(secs).padStart(2, '0')} /km`;
+const ALL_DOMAINS: DomainId[] = [
+  'running',
+  'strength',
+  'karate',
+  'music',
+  'recovery',
+  'sleep',
+  'reading',
+  'health',
+];
+
+function occursOnDate(block: ScheduleBlock, dateIso: string): boolean {
+  if (!block.is_recurring && !block.start_time) return false;
+  if (block.is_recurring && block.recurrence_days.length > 0) {
+    return block.recurrence_days.includes(getIsoWeekday(dateIso));
+  }
+  return block.block_date === dateIso;
+}
+
+function fmtPace(secPerKm: number): string {
+  if (!secPerKm || !Number.isFinite(secPerKm)) return '--:--';
+  const m = Math.floor(secPerKm / 60);
+  const s = Math.round(secPerKm % 60);
+  return `${m}:${String(s).padStart(2, '0')}`;
 }
 
 export function AnalyticsPage() {
   const { user, profile } = useAuth();
-  const tz = profile?.timezone ?? 'Asia/Colombo';
-  const today = getLocalDateString(new Date(), tz);
+  const { resolvedTheme } = useTheme();
+  const isDark = resolvedTheme === 'dark';
+  const T = useMemo(() => getV2Theme(isDark), [isDark]);
 
-  const [sessions, setSessions] = useState<RunningSession[]>([]);
+  const tz = profile?.timezone ?? 'Asia/Colombo';
+  const today = useMemo(() => getLocalDateString(new Date(), tz), [tz]);
+  const weekStart = useMemo(() => getMondayWeekStart(today), [today]);
+  const weekDates = useMemo(
+    () => Array.from({ length: 7 }, (_, i) => addDaysIso(weekStart, i)),
+    [weekStart]
+  );
+  const weekEnd = weekDates[6];
+
   const [blocks, setBlocks] = useState<ScheduleBlock[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [weeksWindow, setWeeksWindow] = useState<4 | 8 | 12>(8);
-  const [paceFilter, setPaceFilter] = useState<WorkoutType | 'ALL'>('ALL');
+  const [completions, setCompletions] = useState<ScheduleCompletion[]>([]);
+  const [runs, setRuns] = useState<RunningSession[]>([]);
+  const [habits, setHabits] = useState<HabitLog[]>([]);
+  const [trendMode, setTrendMode] = useState<'pace' | 'monk'>('pace');
 
   useEffect(() => {
-    if (!user) {
-      setLoading(false);
-      return;
-    }
-    Promise.all([
+    if (!user) return;
+    void Promise.all([
+      listScheduleBlocks(user.id),
+      listScheduleCompletions(user.id, weekStart, weekEnd),
       listRunningSessions(user.id),
-      listScheduleBlocks(user.id).catch(() => [] as ScheduleBlock[]),
-    ])
-      .then(([runRows, blockRows]) => {
-        setSessions(runRows);
-        setBlocks(blockRows);
-      })
-      .finally(() => setLoading(false));
-  }, [user]);
+      listHabitLogs(user.id, PORN_FREE_HABIT_KEY),
+    ]).then(([b, c, r, h]) => {
+      setBlocks(b);
+      setCompletions(c);
+      setRuns(r);
+      setHabits(h);
+    });
+  }, [user, weekStart, weekEnd]);
 
-  const weeklySeries = useMemo(
-    () => buildWeeklyVolumeSeries(sessions, today, weeksWindow),
-    [sessions, today, weeksWindow]
+  const completionMap = useMemo(() => {
+    const m = new Map<string, ScheduleCompletion>();
+    for (const c of completions) {
+      m.set(`${c.block_id}__${c.occurrence_date}`, c);
+    }
+    return m;
+  }, [completions]);
+
+  const { totalScheduled, totalDone, domainHours } = useMemo(() => {
+    let scheduled = 0;
+    let done = 0;
+    const minsByDom = new Map<DomainId, number>();
+
+    for (const iso of weekDates) {
+      for (const blk of blocks) {
+        if (occursOnDate(blk, iso)) {
+          scheduled++;
+          const isDone = completionMap.get(`${blk.id}__${iso}`)?.status === 'COMPLETED';
+          if (isDone) done++;
+          const domId = mapCategoryToDomain(blk.category);
+          minsByDom.set(domId, (minsByDom.get(domId) ?? 0) + (blk.duration_min ?? 30));
+        }
+      }
+    }
+
+    const weekRunMins = runs
+      .filter((r) => r.session_date >= weekStart && r.session_date <= weekEnd)
+      .reduce((acc, r) => acc + Math.round((r.duration_s || 0) / 60), 0);
+    if (weekRunMins > (minsByDom.get('running') ?? 0)) {
+      minsByDom.set('running', weekRunMins);
+    }
+
+    const list = ALL_DOMAINS.map((id) => ({
+      id,
+      hours: Number(((minsByDom.get(id) ?? 0) / 60).toFixed(1)),
+    }))
+      .filter((x) => x.hours > 0)
+      .sort((a, b) => b.hours - a.hours);
+
+    return { totalScheduled: scheduled, totalDone: done, domainHours: list };
+  }, [blocks, weekDates, completionMap, runs, weekStart, weekEnd]);
+
+  const pct = totalScheduled > 0 ? Math.round((totalDone / totalScheduled) * 100) : 0;
+  const maxHours = Math.max(1, ...domainHours.map((x) => x.hours));
+
+  const pornFree = useMemo(
+    () => calculateHabitStreak(PORN_FREE_HABIT_KEY, habits, today),
+    [habits, today]
   );
 
-  const paceSeries = useMemo(
-    () => buildPaceProgressionSeries(sessions, paceFilter),
-    [sessions, paceFilter]
+  const weeklyRunKm = useMemo(
+    () =>
+      runs
+        .filter((r) => r.session_date >= weekStart && r.session_date <= weekEnd)
+        .reduce((acc, r) => acc + (r.distance_m || 0) / 1000, 0),
+    [runs, weekStart, weekEnd]
   );
 
-  const consistency = useMemo(
-    () => computeConsistencySummary(sessions, today),
-    [sessions, today]
+  const strengthCount = useMemo(
+    () => completions.filter((c) => c.status === 'COMPLETED' && c.strength_focus !== null).length,
+    [completions]
   );
 
-  const separation = useMemo(
-    () => computeActivitySeparation(blocks, sessions, today),
-    [blocks, sessions, today]
-  );
+  const readingStreak = useMemo(() => {
+    const entries = extractReadingEntries(blocks);
+    const dates = new Set(entries.map((e) => e.date));
+    let streak = 0;
+    let cursor = dates.has(today) ? today : addDaysIso(today, -1);
+    while (dates.has(cursor)) {
+      streak++;
+      cursor = addDaysIso(cursor, -1);
+    }
+    return streak;
+  }, [blocks, today]);
 
-  const avg28dPace =
-    consistency.distanceLast28dM > 0 && consistency.durationLast28dS > 0
-      ? formatPace(consistency.distanceLast28dM, consistency.durationLast28dS).replace(' /km', '')
-      : null;
+  // Pace sparkline (last 8 runs chronologically)
+  const pacePoints = useMemo(() => {
+    const recent = runs
+      .filter((r) => r.distance_m >= 1000 && r.duration_s > 0)
+      .slice()
+      .sort((a, b) => a.session_date.localeCompare(b.session_date))
+      .slice(-8);
+    return recent.map((r) => ({
+      label: r.session_date.slice(5),
+      paceSec: (r.duration_s / r.distance_m) * 1000,
+    }));
+  }, [runs]);
+
+  // Monk compounding sparkline (active sprint or last 7 days)
+  const monkPoints = useMemo(() => {
+    const store = loadDisciplineStore(user?.id ?? 'guest');
+    if (store.activeMonk) {
+      const report = evaluateMonkModeReport(store.activeMonk, store.completionsByDate, today);
+      const pts: { label: string; score: number }[] = [];
+      let score = 1.0;
+      const start = store.activeMonk.startDate;
+      const total = Math.max(1, Math.min(14, report.elapsedDays));
+      for (let i = 0; i < total; i++) {
+        const d = addDaysIso(start, i);
+        const doneIds = store.completionsByDate[d] ?? [];
+        const nonNegIds = store.commitments
+          .filter((c) => c.tier === 'NON_NEGOTIABLE')
+          .map((c) => c.id);
+        const allMet = nonNegIds.length > 0 && nonNegIds.every((id) => doneIds.includes(id));
+        score = allMet ? score * 1.01 : score * 0.99;
+        pts.push({ label: d.slice(5), score: Number(score.toFixed(3)) });
+      }
+      return pts;
+    }
+    return weekDates.map((d, idx) => ({
+      label: d.slice(5),
+      score: Number((1 + idx * 0.01).toFixed(2)),
+    }));
+  }, [user, today, weekDates]);
+
+  const circ = 2 * Math.PI * 54;
+
+  // Build clean SVG polyline for active trend
+  const sparkData = useMemo(() => {
+    if (trendMode === 'pace') {
+      if (pacePoints.length < 2) return null;
+      const minP = Math.min(...pacePoints.map((p) => p.paceSec));
+      const maxP = Math.max(...pacePoints.map((p) => p.paceSec));
+      const span = Math.max(10, maxP - minP);
+      // Faster pace (lower seconds) sits higher on the chart
+      const coords = pacePoints.map((p, i) => {
+        const x = 24 + (i / (pacePoints.length - 1)) * 552;
+        const y = 96 - ((maxP - p.paceSec) / span) * 68;
+        return { x, y, label: p.label, display: fmtPace(p.paceSec) };
+      });
+      return {
+        coords,
+        color: '#2563EB',
+        summary: `Latest ${fmtPace(pacePoints[pacePoints.length - 1].paceSec)} /km · Best ${fmtPace(minP)} /km`,
+      };
+    }
+
+    if (monkPoints.length < 2) return null;
+    const minS = Math.min(...monkPoints.map((p) => p.score));
+    const maxS = Math.max(...monkPoints.map((p) => p.score));
+    const span = Math.max(0.02, maxS - minS);
+    const coords = monkPoints.map((p, i) => {
+      const x = 24 + (i / (monkPoints.length - 1)) * 552;
+      const y = 96 - ((p.score - minS) / span) * 68;
+      return { x, y, label: p.label, display: `${p.score.toFixed(2)}×` };
+    });
+    return {
+      coords,
+      color: '#10B981',
+      summary: `Current ${monkPoints[monkPoints.length - 1].score.toFixed(2)}× compounding`,
+    };
+  }, [trendMode, pacePoints, monkPoints]);
 
   return (
-    <div className="space-y-7 pb-6">
-      {/* Studio Header (Common Default Stride Blue) */}
-      <header className="flex flex-col justify-between gap-4 sm:flex-row sm:items-end">
-        <h1 className="text-[34px] font-bold leading-[1.08] tracking-[-0.055em] text-[var(--ink)] sm:text-[42px]">
-          Understand your <em className="not-italic text-[var(--blue)]">progress.</em>
-        </h1>
+    <div className="animate-pop space-y-6">
+      <h1 className={`font-display text-3xl font-extrabold tracking-tight ${T.text}`}>Analytics</h1>
 
-        <Link
-          to="/runs"
-          className="inline-flex h-10 shrink-0 items-center gap-1.5 rounded-[9px] border border-[var(--line-strong)] bg-[var(--surface)] px-4 text-[12.5px] font-semibold text-[var(--ink)] transition-colors hover:bg-[var(--surface-2)]"
+      {/* Row 1: Weekly Completion Ring + Domain Distribution */}
+      <div className="grid grid-cols-1 gap-6 lg:grid-cols-12">
+        <div
+          className={`flex flex-col items-center justify-center gap-4 rounded-3xl border p-6 lg:col-span-4 ${T.card}`}
         >
-          <span>Open running log</span>
-          <ArrowRight className="h-3.5 w-3.5" />
-        </Link>
-      </header>
-
-      {/* Clean 3-Column Studio Metric Strip */}
-      <div className="grid grid-cols-1 divide-y divide-[var(--line)] rounded-[15px] border border-[var(--line)] bg-[var(--surface)] sm:grid-cols-3 sm:divide-x sm:divide-y-0">
-        <div className="px-6 py-5">
-          <span className="text-[10px] font-bold uppercase tracking-[0.11em] text-[var(--muted)]">
-            LAST 28 DAYS
+          <span className={`text-xs font-extrabold uppercase tracking-wider ${T.muted}`}>
+            WEEKLY COMPLETION
           </span>
-          <div className="mt-2 font-mono text-[32px] font-bold leading-none tracking-[-0.06em] text-[var(--blue)] tabular-nums">
-            {loading ? '—' : (consistency.distanceLast28dM / 1000).toFixed(1)}
-            <small className="ml-1.5 font-sans text-[14px] font-medium text-[var(--muted)]">
-              km
-            </small>
-          </div>
-          <span className="mt-1.5 block text-[11.5px] text-[var(--muted)]">
-            {formatDurationSeconds(consistency.durationLast28dS)} running time
-          </span>
-        </div>
-
-        <div className="px-6 py-5">
-          <span className="text-[10px] font-bold uppercase tracking-[0.11em] text-[var(--muted)]">
-            RUNS &amp; STREAK
-          </span>
-          <div className="mt-2 font-mono text-[32px] font-bold leading-none tracking-[-0.06em] text-[var(--ink)] tabular-nums">
-            {loading ? '—' : consistency.runsLast28d}
-            <small className="ml-2 font-sans text-[14px] font-medium text-[var(--muted)]">
-              · {consistency.currentWeekStreak} wk streak
-            </small>
-          </div>
-          <span className="mt-1.5 block text-[11.5px] text-[var(--muted)]">
-            {consistency.avgRunsPerWeek} runs / week average
-          </span>
-        </div>
-
-        <div className="px-6 py-5">
-          <span className="text-[10px] font-bold uppercase tracking-[0.11em] text-[var(--muted)]">
-            AVERAGE PACE
-          </span>
-          <div className="mt-2 font-mono text-[32px] font-bold leading-none tracking-[-0.06em] text-[var(--ink)] tabular-nums">
-            {loading ? '—' : avg28dPace ?? '—'}
-            {avg28dPace && (
-              <small className="ml-1.5 font-sans text-[14px] font-medium text-[var(--muted)]">
-                /km
-              </small>
-            )}
-          </div>
-          <span className="mt-1.5 block text-[11.5px] text-[var(--muted)]">
-            28-day aggregate pace
-          </span>
-        </div>
-      </div>
-
-      {/* Charts Grid */}
-      <div className="grid gap-5 lg:grid-cols-2">
-        {/* Weekly Distance */}
-        <section className="rounded-[15px] border border-[var(--line)] bg-[var(--surface)] p-6">
-          <div className="mb-5 flex flex-wrap items-center justify-between gap-3">
-            <div>
-              <h2 className="text-[19px] font-bold tracking-[-0.04em] text-[var(--ink)]">
-                Weekly distance
-              </h2>
-              <p className="mt-0.5 text-[12px] text-[var(--muted)]">
-                Running kilometers · Monday to Sunday
-              </p>
-            </div>
-
-            <div className="inline-flex rounded-[9px] border border-[var(--line)] p-0.5 text-[11.5px] font-semibold">
-              {([4, 8, 12] as const).map((w) => (
-                <button
-                  key={w}
-                  type="button"
-                  onClick={() => setWeeksWindow(w)}
-                  className={`rounded-[7px] px-2.5 py-1 transition-colors ${
-                    weeksWindow === w
-                      ? 'bg-[var(--blue-lite)] font-bold text-[var(--blue-ink)]'
-                      : 'text-[var(--muted)] hover:text-[var(--ink)]'
-                  }`}
-                >
-                  {w}w
-                </button>
-              ))}
+          <div className="relative flex h-40 w-40 items-center justify-center">
+            <svg className="h-full w-full -rotate-90" viewBox="0 0 130 130">
+              <circle
+                cx="65"
+                cy="65"
+                r="54"
+                stroke={isDark ? '#1D1D1D' : '#F1F5F9'}
+                strokeWidth="13"
+                fill="none"
+              />
+              <circle
+                cx="65"
+                cy="65"
+                r="54"
+                stroke="#2563EB"
+                strokeWidth="13"
+                strokeLinecap="round"
+                fill="none"
+                strokeDasharray={circ}
+                strokeDashoffset={circ * (1 - pct / 100)}
+              />
+            </svg>
+            <div className="absolute text-center">
+              <span className={`font-display text-3xl font-extrabold tabular-nums ${T.text}`}>
+                {pct}%
+              </span>
+              <span className={`block text-[11px] font-bold tabular-nums ${T.muted}`}>
+                {totalDone}/{totalScheduled}
+              </span>
             </div>
           </div>
+        </div>
 
-          <div className="h-[250px] w-full">
-            <ResponsiveContainer width="100%" height="100%">
-              <BarChart data={weeklySeries} margin={{ top: 8, right: 8, left: -16, bottom: 0 }}>
-                <CartesianGrid strokeDasharray="3 3" stroke="var(--line)" vertical={false} />
-                <XAxis
-                  dataKey="weekLabel"
-                  tick={{ fontSize: 11, fill: 'var(--muted)' }}
-                  axisLine={{ stroke: 'var(--line-strong)' }}
-                  tickLine={false}
-                />
-                <YAxis
-                  tick={{ fontSize: 11, fill: 'var(--muted)' }}
-                  axisLine={false}
-                  tickLine={false}
-                  unit=" km"
-                />
-                <Tooltip
-                  formatter={(value: unknown) => [`${Number(value).toFixed(2)} km`, 'Distance']}
-                  contentStyle={{
-                    borderRadius: '10px',
-                    border: '1px solid var(--line-strong)',
-                    backgroundColor: 'var(--surface)',
-                    color: 'var(--ink)',
-                    fontSize: '12px',
-                  }}
-                />
-                <Bar
-                  dataKey="distanceKm"
-                  fill="var(--blue)"
-                  radius={[5, 5, 0, 0]}
-                  maxBarSize={32}
-                />
-              </BarChart>
-            </ResponsiveContainer>
-          </div>
-        </section>
-
-        {/* Pace Progression */}
-        <section className="rounded-[15px] border border-[var(--line)] bg-[var(--surface)] p-6">
-          <div className="mb-5 flex flex-wrap items-center justify-between gap-3">
-            <div>
-              <h2 className="text-[19px] font-bold tracking-[-0.04em] text-[var(--ink)]">
-                Pace history
-              </h2>
-              <p className="mt-0.5 text-[12px] text-[var(--muted)]">
-                Higher points indicate faster average pace.
-              </p>
-            </div>
-
-            <select
-              aria-label="Filter pace chart by workout type"
-              value={paceFilter}
-              onChange={(e) => setPaceFilter(e.target.value as WorkoutType | 'ALL')}
-              className="h-9 rounded-[8px] border border-[var(--line-strong)] bg-[var(--input-bg)] px-2.5 text-[12px] text-[var(--ink)] focus:border-[var(--blue)] focus:outline-none"
-            >
-              <option value="ALL">All types</option>
-              {Object.entries(WORKOUT_TYPE_LABELS).map(([k, label]) => (
-                <option key={k} value={k}>
-                  {label}
-                </option>
-              ))}
-            </select>
-          </div>
-
-          {paceSeries.length === 0 ? (
-            <div className="flex h-[250px] flex-col items-center justify-center text-center">
-              <div className="mb-3 flex h-8 items-end gap-1 -rotate-12" aria-hidden="true">
-                <span className="h-3.5 w-2 rounded bg-[var(--line-strong)]" />
-                <span className="h-6 w-2 rounded bg-[var(--blue)]" />
-                <span className="h-4.5 w-2 rounded bg-[var(--line-strong)]" />
-              </div>
-              <h3 className="text-[15px] font-bold text-[var(--ink)]">No pace data yet.</h3>
-              <p className="mt-1 text-[12px] text-[var(--muted)]">
-                Record a run to start building your pace progression.
-              </p>
+        <div className={`space-y-4 rounded-3xl border p-6 lg:col-span-8 ${T.card}`}>
+          <h2 className={`font-display text-lg font-extrabold ${T.text}`}>Domain Distribution</h2>
+          {domainHours.length === 0 ? (
+            <div className={`rounded-2xl border border-dashed p-8 text-center text-xs font-bold ${T.cardSubtle} ${T.muted}`}>
+              Log or schedule blocks this week to see your time distribution
             </div>
           ) : (
-            <div className="h-[250px] w-full">
-              <ResponsiveContainer width="100%" height="100%">
-                <LineChart data={paceSeries} margin={{ top: 8, right: 12, left: 0, bottom: 0 }}>
-                  <CartesianGrid strokeDasharray="3 3" stroke="var(--line)" vertical={false} />
-                  <XAxis
-                    dataKey="date"
-                    tick={{ fontSize: 11, fill: 'var(--muted)' }}
-                    axisLine={{ stroke: 'var(--line-strong)' }}
-                    tickLine={false}
-                  />
-                  <YAxis
-                    reversed
-                    domain={['dataMin - 15', 'dataMax + 15']}
-                    tickFormatter={(v: number) => formatSecPerKm(v).replace(' /km', '')}
-                    tick={{ fontSize: 11, fill: 'var(--muted)' }}
-                    axisLine={false}
-                    tickLine={false}
-                  />
-                  <Tooltip
-                    formatter={(value: unknown) => [formatSecPerKm(Number(value)), 'Avg Pace']}
-                    contentStyle={{
-                      borderRadius: '10px',
-                      border: '1px solid var(--line-strong)',
-                      backgroundColor: 'var(--surface)',
-                      color: 'var(--ink)',
-                      fontSize: '12px',
-                    }}
-                  />
-                  <Line
-                    type="monotone"
-                    dataKey="paceSecPerKm"
-                    stroke="var(--blue)"
-                    strokeWidth={2.2}
-                    dot={{ r: 4.5, fill: 'var(--blue)', stroke: 'var(--surface)', strokeWidth: 2 }}
-                    activeDot={{ r: 6 }}
-                  />
-                </LineChart>
-              </ResponsiveContainer>
+            <div className="space-y-3">
+              {domainHours.map((item) => {
+                const d = getDom(item.id, isDark);
+                return (
+                  <div key={item.id} className="space-y-1">
+                    <div className="flex justify-between text-xs font-extrabold">
+                      <span className={`flex items-center gap-2 ${T.text}`}>
+                        <span className={d.text}>
+                          <DuoIcon name={item.id} className="h-4 w-4" />
+                        </span>
+                        {d.label}
+                      </span>
+                      <span className={`tabular-nums ${T.muted}`}>{item.hours}h</span>
+                    </div>
+                    <div className={`h-2.5 w-full overflow-hidden rounded-full ${T.surface}`}>
+                      <div
+                        className={`h-full rounded-full ${d.bg}`}
+                        style={{ width: `${(item.hours / maxHours) * 100}%` }}
+                      />
+                    </div>
+                  </div>
+                );
+              })}
             </div>
           )}
-        </section>
+        </div>
       </div>
 
-      {/* Activity Separation Audit */}
-      <section className="rounded-[15px] border border-[var(--line)] bg-[var(--surface)] p-6">
-        <div className="mb-4 flex flex-wrap items-center justify-between gap-2">
+      {/* Row 2: 4 Clean Stat Tiles */}
+      <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
+        {[
+          { label: 'Clean Streak', val: `${pornFree.currentStreak}d`, icon: 'flame' as const, domId: 'reading' as DomainId },
+          { label: 'Weekly Run', val: `${weeklyRunKm.toFixed(1)} km`, icon: 'running' as const, domId: 'running' as DomainId },
+          { label: 'Strength', val: `${strengthCount}/4`, icon: 'strength' as const, domId: 'strength' as DomainId },
+          { label: 'Reading Streak', val: `${readingStreak}d`, icon: 'reading' as const, domId: 'health' as DomainId },
+        ].map((s) => {
+          const d = getDom(s.domId, isDark);
+          return (
+            <div key={s.label} className={`space-y-2 rounded-3xl border p-5 ${T.card}`}>
+              <div className={`flex h-12 w-12 items-center justify-center rounded-2xl ${d.soft} ${d.text}`}>
+                <DuoIcon name={s.icon} className="h-7 w-7" />
+              </div>
+              <span className={`block text-[11px] font-extrabold uppercase ${T.muted}`}>
+                {s.label}
+              </span>
+              <span className={`block font-display text-2xl font-extrabold tabular-nums ${T.text}`}>
+                {s.val}
+              </span>
+            </div>
+          );
+        })}
+      </div>
+
+      {/* Row 3: Subtle Trend Sparkline Strip */}
+      <div className={`space-y-4 rounded-3xl border p-6 ${T.card}`}>
+        <div className="flex flex-wrap items-center justify-between gap-3">
           <div>
-            <h2 className="text-[19px] font-bold tracking-[-0.04em] text-[var(--ink)]">
-              7-day activity separation
+            <span className={`text-[10px] font-extrabold uppercase tracking-widest ${T.muted}`}>
+              TREND
+            </span>
+            <h2 className={`font-display text-lg font-extrabold ${T.text}`}>
+              {trendMode === 'pace' ? 'Pace Progression' : 'Monk Mode Compounding'}
             </h2>
-            <p className="mt-0.5 text-[12px] text-[var(--muted)]">
-              Karate, music, strength, and recovery stay isolated from running mileage.
-            </p>
           </div>
-          <Link
-            to="/personal-bests"
-            className="inline-flex items-center gap-1 text-[12px] font-semibold text-[var(--blue)] hover:underline"
-          >
-            <span>Personal bests</span>
-            <ArrowRight className="h-3.5 w-3.5" />
-          </Link>
+          <div className={`inline-flex rounded-2xl border p-1 ${T.cardSubtle}`}>
+            <button
+              type="button"
+              onClick={() => setTrendMode('pace')}
+              className={`cursor-pointer rounded-xl px-3 py-1 text-xs font-extrabold transition-all ${
+                trendMode === 'pace'
+                  ? isDark
+                    ? 'bg-[#242424] text-[#F5F5F5]'
+                    : 'bg-white text-[#0F172A] shadow-sm'
+                  : T.muted
+              }`}
+            >
+              5K Pace
+            </button>
+            <button
+              type="button"
+              onClick={() => setTrendMode('monk')}
+              className={`cursor-pointer rounded-xl px-3 py-1 text-xs font-extrabold transition-all ${
+                trendMode === 'monk'
+                  ? isDark
+                    ? 'bg-[#242424] text-[#F5F5F5]'
+                    : 'bg-white text-[#0F172A] shadow-sm'
+                  : T.muted
+              }`}
+            >
+              Monk Curve
+            </button>
+          </div>
         </div>
 
-        <div className="overflow-x-auto border-t border-[var(--line)]">
-          <table className="w-full border-collapse text-left text-[13px]">
-            <thead>
-              <tr className="border-b border-[var(--line)] text-[10.5px] font-bold uppercase tracking-[0.1em] text-[var(--faint)]">
-                <th className="py-3 pr-4">Category</th>
-                <th className="px-4 py-3">Sessions (7d)</th>
-                <th className="px-4 py-3">Time</th>
-                <th className="py-3 pl-4">Running km</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-[var(--line)]">
-              {separation.map((row) => (
-                <tr key={row.category}>
-                  <td className="py-3 pr-4">
-                    <CategoryBadge category={row.category} />
-                  </td>
-                  <td className="px-4 py-3 font-mono font-semibold text-[var(--ink)] tabular-nums">
-                    {row.countLast7d}
-                  </td>
-                  <td className="px-4 py-3 font-mono text-[var(--muted)] tabular-nums">
-                    {row.totalMinutesLast7d > 0 ? `${row.totalMinutesLast7d} min` : '—'}
-                  </td>
-                  <td className="py-3 pl-4 text-[12px]">
-                    {row.contributesToRunningKm ? (
-                      <span className="font-semibold text-[var(--blue)]">Running only</span>
-                    ) : (
-                      <span className="text-[var(--muted)]">Isolated</span>
-                    )}
-                  </td>
-                </tr>
+        {!sparkData ? (
+          <div className={`rounded-2xl border border-dashed p-6 text-center text-xs font-bold ${T.cardSubtle} ${T.muted}`}>
+            Log at least 2 runs to plot your pace progression
+          </div>
+        ) : (
+          <div className="space-y-2">
+            <svg viewBox="0 0 600 120" className="h-32 w-full overflow-visible">
+              <polyline
+                fill="none"
+                stroke={sparkData.color}
+                strokeWidth="3.5"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                points={sparkData.coords.map((c) => `${c.x},${c.y}`).join(' ')}
+              />
+              {sparkData.coords.map((c, idx) => (
+                <g key={idx}>
+                  <circle
+                    cx={c.x}
+                    cy={c.y}
+                    r="5"
+                    fill={sparkData.color}
+                    stroke={isDark ? '#101010' : '#FFFFFF'}
+                    strokeWidth="2"
+                  />
+                  <text
+                    x={c.x}
+                    y="115"
+                    textAnchor="middle"
+                    fill={isDark ? '#8E8E8E' : '#64748B'}
+                    fontSize="10"
+                    fontWeight="700"
+                  >
+                    {c.label}
+                  </text>
+                </g>
               ))}
-            </tbody>
-          </table>
-        </div>
-      </section>
-
-      <div className="flex items-start gap-2.5 px-1 text-[11.5px] leading-relaxed text-[var(--muted)]">
-        <Info className="mt-0.5 h-4 w-4 shrink-0" />
-        <p>All charts are computed exclusively from verified Supabase running sessions.</p>
+            </svg>
+            <div className={`text-right text-xs font-extrabold tabular-nums ${T.muted}`}>
+              {sparkData.summary}
+            </div>
+          </div>
+        )}
       </div>
     </div>
   );

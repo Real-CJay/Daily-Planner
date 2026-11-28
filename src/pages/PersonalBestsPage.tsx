@@ -1,423 +1,246 @@
-﻿import { useCallback, useEffect, useMemo, useState, type FormEvent } from 'react';
-import { ArrowRight, Info, Trash2, X } from 'lucide-react';
-import { formatDurationSeconds, getLocalDateString } from '@/lib/datetime';
+﻿import { useCallback, useEffect, useMemo, useState } from 'react';
+import { DuoIcon } from '@/design-system/DuoIcon';
+import { getDom, getV2Theme, type DomainId } from '@/design-system/v2Theme';
+import { useFeedback } from '@/components/feedback/FeedbackContext';
 import { useAuth } from '@/modules/auth/AuthContext';
+import { useTheme } from '@/modules/theme/ThemeContext';
+import { getLocalDateString } from '@/lib/datetime';
+import { listPersonalBests, upsertPersonalBest } from '@/modules/analytics/repository';
 import { listRunningSessions } from '@/modules/running/repository';
-import { formatPace, parseDurationToSeconds } from '@/modules/running/calculations';
-import { buildBenchmarkMatrix } from '@/modules/analytics/analyticsEngine';
-import {
-  deletePersonalBest,
-  listPersonalBests,
-  upsertPersonalBest,
-} from '@/modules/analytics/repository';
-import {
-  BENCHMARK_DISTANCES,
-  type BenchmarkDistance,
-  type PersonalBest,
-  type RunningSession,
-} from '@/types/domain';
+import { parseDurationToSeconds } from '@/modules/running/calculations';
+import { listHabitLogs } from '@/modules/habits/repository';
+import { calculateHabitStreak, PORN_FREE_HABIT_KEY } from '@/modules/habits/streakEngine';
+import type { BenchmarkDistance, HabitLog, PersonalBest, RunningSession } from '@/types/domain';
+
+interface DistanceConfig {
+  label: BenchmarkDistance;
+  title: string;
+  meters: number;
+  domId: DomainId;
+}
+
+const DISTANCES: DistanceConfig[] = [
+  { label: '5K', title: '5K PR', meters: 5000, domId: 'running' },
+  { label: '10K', title: '10K PR', meters: 10000, domId: 'strength' },
+  { label: '3K', title: '3K PR', meters: 3000, domId: 'karate' },
+  { label: '1K', title: '1K PR', meters: 1000, domId: 'reading' },
+];
+
+function fmtDuration(sec: number | null): string {
+  if (!sec || sec <= 0) return '';
+  const m = Math.floor(sec / 60);
+  const s = Math.round(sec % 60);
+  return `${m}:${String(s).padStart(2, '0')}`;
+}
+
+function fmtPace(meters: number, sec: number | null): string {
+  if (!sec || sec <= 0 || meters <= 0) return 'Not set';
+  const perKm = (sec / meters) * 1000;
+  const m = Math.floor(perKm / 60);
+  const s = Math.round(perKm % 60);
+  return `${m}:${String(s).padStart(2, '0')} /km`;
+}
 
 export function PersonalBestsPage() {
   const { user, profile } = useAuth();
+  const { resolvedTheme } = useTheme();
+  const { triggerConfetti, pushToast } = useFeedback();
+
+  const isDark = resolvedTheme === 'dark';
+  const T = useMemo(() => getV2Theme(isDark), [isDark]);
+
   const tz = profile?.timezone ?? 'Asia/Colombo';
-  const today = getLocalDateString(new Date(), tz);
+  const today = useMemo(() => getLocalDateString(new Date(), tz), [tz]);
 
-  const [sessions, setSessions] = useState<RunningSession[]>([]);
-  const [pbs, setPbs] = useState<PersonalBest[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
-  const [notice, setNotice] = useState<string | null>(null);
-
-  const [editingDist, setEditingDist] = useState<BenchmarkDistance | null>(null);
-  const [durationStr, setDurationStr] = useState('');
-  const [achievedDate, setAchievedDate] = useState(today);
-  const [linkedSessionId, setLinkedSessionId] = useState<string | null>(null);
-  const [notes, setNotes] = useState('');
-  const [saving, setSaving] = useState(false);
+  const [bests, setBests] = useState<PersonalBest[]>([]);
+  const [runs, setRuns] = useState<RunningSession[]>([]);
+  const [habits, setHabits] = useState<HabitLog[]>([]);
+  const [draftValues, setDraftValues] = useState<Record<BenchmarkDistance, string>>({
+    '1K': '',
+    '3K': '',
+    '5K': '',
+    '10K': '',
+  });
+  const [savingDist, setSavingDist] = useState<BenchmarkDistance | null>(null);
 
   const loadData = useCallback(async () => {
     if (!user) return;
-    setLoading(true);
-    setError(null);
-    try {
-      const [runRows, pbRows] = await Promise.all([
-        listRunningSessions(user.id),
-        listPersonalBests(user.id),
-      ]);
-      setSessions(runRows);
-      setPbs(pbRows);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to load benchmarks.');
-    } finally {
-      setLoading(false);
+    const [pbList, runList, habitList] = await Promise.all([
+      listPersonalBests(user.id),
+      listRunningSessions(user.id),
+      listHabitLogs(user.id, PORN_FREE_HABIT_KEY),
+    ]);
+    setBests(pbList);
+    setRuns(runList);
+    setHabits(habitList);
+
+    const nextDrafts: Record<BenchmarkDistance, string> = {
+      '1K': '',
+      '3K': '',
+      '5K': '',
+      '10K': '',
+    };
+    for (const d of DISTANCES) {
+      const saved = pbList.find((p) => p.distance_label === d.label);
+      if (saved) {
+        nextDrafts[d.label] = fmtDuration(saved.duration_s);
+      } else {
+        const matchingRuns = runList.filter(
+          (r) => r.distance_m >= d.meters * 0.96 && r.distance_m <= d.meters * 1.05 && r.duration_s > 0
+        );
+        if (matchingRuns.length > 0) {
+          const fastest = Math.min(...matchingRuns.map((r) => r.duration_s));
+          nextDrafts[d.label] = fmtDuration(fastest);
+        }
+      }
     }
+    setDraftValues(nextDrafts);
   }, [user]);
 
   useEffect(() => {
     void loadData();
   }, [loadData]);
 
-  useEffect(() => {
-    if (!editingDist) return;
-    const onKeyDown = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') setEditingDist(null);
-    };
-    window.addEventListener('keydown', onKeyDown);
-    return () => window.removeEventListener('keydown', onKeyDown);
-  }, [editingDist]);
-
-  const matrix = useMemo(() => buildBenchmarkMatrix(sessions, pbs), [sessions, pbs]);
-
-  const fiveKRow = matrix.find((r) => r.distance === '5K');
-  const best5kS = fiveKRow?.confirmedPb?.duration_s ?? fiveKRow?.fastestLogged?.durationS ?? null;
-  const sub20GoalS = profile?.first_major_5k_goal_s ?? 1200;
-  const longTermGoalS = profile?.long_term_5k_goal_s ?? 1050;
-
-  function openEditor(
-    dist: BenchmarkDistance,
-    prefill?: { durationS: number; date: string; sessionId: string | null; notes: string | null }
-  ) {
-    setEditingDist(dist);
-    setDurationStr(prefill ? formatDurationSeconds(prefill.durationS) : '');
-    setAchievedDate(prefill?.date ?? today);
-    setLinkedSessionId(prefill?.sessionId ?? null);
-    setNotes(prefill?.notes ?? '');
-    setError(null);
-  }
-
-  async function handleSavePb(e: FormEvent) {
-    e.preventDefault();
-    if (!user || !editingDist) return;
-
-    const durS = parseDurationToSeconds(durationStr);
-    if (!durS) {
-      setError('Enter a valid time in mm:ss or h:mm:ss format.');
+  async function handleSavePB(cfg: DistanceConfig) {
+    if (!user) return;
+    const raw = draftValues[cfg.label].trim();
+    const parsedSec = parseDurationToSeconds(raw);
+    if (!parsedSec || parsedSec <= 0) {
+      pushToast('Enter time as MM:SS (e.g. 21:40)', '#EA580C');
       return;
     }
-
+    setSavingDist(cfg.label);
     try {
-      setSaving(true);
-      setError(null);
       await upsertPersonalBest(user.id, {
-        distance_label: editingDist,
-        distance_m: BENCHMARK_DISTANCES[editingDist].meters,
-        duration_s: durS,
-        achieved_date: achievedDate,
-        session_id: linkedSessionId,
-        notes: notes.trim() ? notes.trim() : null,
+        distance_label: cfg.label,
+        distance_m: cfg.meters,
+        duration_s: parsedSec,
+        achieved_date: today,
+        session_id: null,
+        notes: 'Saved in Personal Bests',
       });
-      setEditingDist(null);
-      setNotice(`Confirmed ${editingDist} personal best saved.`);
+      triggerConfetti();
+      pushToast(`${cfg.title} updated to ${fmtDuration(parsedSec)}`, '#10B981');
       await loadData();
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Unable to save Personal Best.');
     } finally {
-      setSaving(false);
+      setSavingDist(null);
     }
   }
 
-  async function handleDeletePb(pb: PersonalBest) {
-    if (!user) return;
-    if (!window.confirm(`Remove confirmed ${pb.distance_label} Personal Best?`)) return;
-    await deletePersonalBest(user.id, pb.id);
-    setNotice(`Removed confirmed ${pb.distance_label} personal best.`);
-    await loadData();
-  }
+  const pornFree = useMemo(
+    () => calculateHabitStreak(PORN_FREE_HABIT_KEY, habits, today),
+    [habits, today]
+  );
+
+  const longestRunKm = useMemo(() => {
+    if (runs.length === 0) return 0;
+    return Math.max(...runs.map((r) => r.distance_m / 1000));
+  }, [runs]);
 
   return (
-    <div className="space-y-7 pb-6">
-      {/* Studio Header (Common Default Stride Blue) */}
-      <header>
-        <h1 className="text-[34px] font-bold leading-[1.08] tracking-[-0.055em] text-[var(--ink)] sm:text-[42px]">
-          Every second <em className="not-italic text-[var(--blue)]">counts.</em>
+    <div className="animate-pop space-y-6">
+      <div>
+        <h1 className={`font-display text-3xl font-extrabold tracking-tight ${T.text}`}>
+          Personal Bests
         </h1>
-      </header>
-
-      {notice && (
-        <div className="rounded-xl border border-[var(--blue)]/30 bg-[var(--blue-lite)] px-4 py-2.5 text-xs font-semibold text-[var(--blue-ink)]">
-          {notice}
-        </div>
-      )}
-
-      {error && (
-        <div className="rounded-xl border border-red-400/40 bg-red-500/10 px-4 py-2.5 text-xs font-semibold text-red-700 dark:text-red-300">
-          {error}
-        </div>
-      )}
-
-      {/* Top 2 Studio Feature Cards */}
-      <div className="grid gap-4 lg:grid-cols-[1.05fr_0.95fr]">
-        <section
-          className="flex min-h-[205px] flex-col rounded-[15px] border border-[var(--line)] p-6"
-          style={{ background: 'color-mix(in srgb, var(--blue) 4%, var(--surface))' }}
-        >
-          <span className="text-[10px] font-bold uppercase tracking-[0.13em] text-[var(--faint)]">
-            FIRST MAJOR GOAL
-          </span>
-          <div className="mt-4 text-[40px] font-bold leading-tight tracking-[-0.06em] text-[var(--ink)] sm:text-[46px]">
-            5K <span className="text-[var(--blue)]">under {formatDurationSeconds(sub20GoalS)}</span>
-          </div>
-          <p className="mt-1.5 text-[12.5px] text-[var(--muted)]">
-            Long-term goal: {formatDurationSeconds(longTermGoalS)} ({formatPace(5000, longTermGoalS)}).
-          </p>
-          <div className="mt-auto border-t border-[var(--line)] pt-4">
-            <span className="inline-flex items-center gap-2 text-[11.5px] text-[var(--muted)]">
-              <span className="h-2 w-2 rounded-full bg-[var(--blue)]" />
-              {best5kS && best5kS > sub20GoalS
-                ? `${formatDurationSeconds(best5kS - sub20GoalS)} to go from current best`
-                : 'Targets, not recorded results'}
-            </span>
-          </div>
-        </section>
-
-        <section className="flex min-h-[205px] flex-col rounded-[15px] border border-[var(--line)] bg-[var(--surface)] p-6">
-          <span className="text-[10px] font-bold uppercase tracking-[0.13em] text-[var(--faint)]">
-            BEST RECORDED 5 KM
-          </span>
-          <div className="mt-5 font-mono text-[50px] font-bold leading-none tracking-[-0.07em] text-[var(--ink)] tabular-nums">
-            {best5kS ? formatDurationSeconds(best5kS) : '—'}
-          </div>
-          <p className="mt-2.5 text-[12.5px] text-[var(--muted)]">
-            {best5kS
-              ? `${formatPace(5000, best5kS)} · ${
-                  fiveKRow?.confirmedPb?.achieved_date ??
-                  fiveKRow?.fastestLogged?.session.session_date ??
-                  ''
-                }`
-              : 'No exact 5 km result logged yet'}
-          </p>
-          <div className="mt-auto border-t border-[var(--line)] pt-4 text-[11.5px] text-[var(--muted)]">
-            A logged best is never promoted to a lifetime PB without your confirmation.
-          </div>
-        </section>
-      </div>
-
-      {/* Studio Records Table (1K, 3K, 5K, 10K) */}
-      <section className="rounded-[15px] border border-[var(--line)] bg-[var(--surface)] p-6">
-        <div>
-          <h2 className="text-[20px] font-bold tracking-[-0.04em] text-[var(--ink)]">
-            Your distances
-          </h2>
-          <p className="mt-1 text-[12px] text-[var(--muted)]">
-            Confirmed lifetime PBs, fastest logged sessions, and Riegel estimates stay separate.
-          </p>
-        </div>
-
-        {loading ? (
-          <div className="mt-6 border-t border-[var(--line)] py-10 text-center text-sm text-[var(--muted)]">
-            Loading benchmarks...
-          </div>
-        ) : (
-          <div className="mt-6 border-t border-[var(--line)]">
-            <div className="hidden grid-cols-[90px_1.2fr_1.1fr_1fr_140px] items-center gap-4 border-b border-[var(--line)] py-3 text-[10px] font-bold uppercase tracking-[0.11em] text-[var(--faint)] md:grid">
-              <span>Distance</span>
-              <span>Confirmed PB</span>
-              <span>Fastest logged</span>
-              <span>Projected eq.</span>
-              <span className="text-right">Action</span>
-            </div>
-
-            <div className="divide-y divide-[var(--line)]">
-              {matrix.map((row) => (
-                <div
-                  key={row.distance}
-                  className="grid grid-cols-2 items-center gap-3 py-4 text-[13px] md:grid-cols-[90px_1.2fr_1.1fr_1fr_140px] md:gap-4"
-                >
-                  <strong className="font-mono text-[15px] font-bold text-[var(--ink)]">
-                    {row.distance}
-                  </strong>
-
-                  <div>
-                    <span className="block text-[10px] uppercase text-[var(--faint)] md:hidden">
-                      Confirmed PB
-                    </span>
-                    {row.confirmedPb ? (
-                      <div>
-                        <span className="font-mono font-bold text-[var(--blue)] tabular-nums">
-                          {formatDurationSeconds(row.confirmedPb.duration_s)}
-                        </span>
-                        <span className="ml-2 font-mono text-[11px] text-[var(--muted)]">
-                          {row.confirmedPb.achieved_date}
-                        </span>
-                      </div>
-                    ) : (
-                      <span className="text-[var(--muted)]">Not confirmed</span>
-                    )}
-                  </div>
-
-                  <div>
-                    <span className="block text-[10px] uppercase text-[var(--faint)] md:hidden">
-                      Fastest logged
-                    </span>
-                    {row.fastestLogged ? (
-                      <div>
-                        <span className="font-mono font-semibold text-[var(--ink)] tabular-nums">
-                          {formatDurationSeconds(row.fastestLogged.durationS)}
-                        </span>
-                        <span className="ml-2 font-mono text-[11px] text-[var(--muted)]">
-                          {row.fastestLogged.session.session_date}
-                        </span>
-                      </div>
-                    ) : (
-                      <span className="text-[var(--muted)]">—</span>
-                    )}
-                  </div>
-
-                  <div>
-                    <span className="block text-[10px] uppercase text-[var(--faint)] md:hidden">
-                      Projected
-                    </span>
-                    <span className="font-mono text-[var(--muted)] tabular-nums">
-                      {row.estimatedTimeS ? formatDurationSeconds(row.estimatedTimeS) : '—'}
-                    </span>
-                  </div>
-
-                  <div className="col-span-2 flex items-center justify-start gap-1.5 md:col-span-1 md:justify-end">
-                    <button
-                      type="button"
-                      onClick={() =>
-                        openEditor(
-                          row.distance,
-                          row.confirmedPb
-                            ? {
-                                durationS: row.confirmedPb.duration_s,
-                                date: row.confirmedPb.achieved_date,
-                                sessionId: row.confirmedPb.session_id,
-                                notes: row.confirmedPb.notes,
-                              }
-                            : row.fastestLogged
-                              ? {
-                                  durationS: row.fastestLogged.durationS,
-                                  date: row.fastestLogged.session.session_date,
-                                  sessionId: row.fastestLogged.session.id,
-                                  notes: `Promoted from logged ${(
-                                    row.fastestLogged.distanceM / 1000
-                                  ).toFixed(2)} km run.`,
-                                }
-                              : undefined
-                        )
-                      }
-                      className="inline-flex h-8 items-center gap-1.5 rounded-[8px] border border-[var(--blue)]/35 bg-[var(--blue-lite)] px-3 text-[11.5px] font-bold text-[var(--blue-ink)] transition-opacity hover:opacity-90"
-                    >
-                      <span>{row.confirmedPb ? 'Edit PB' : 'Confirm PB'}</span>
-                      <ArrowRight className="h-3.5 w-3.5" />
-                    </button>
-                    {row.confirmedPb && (
-                      <button
-                        type="button"
-                        onClick={() => void handleDeletePb(row.confirmedPb!)}
-                        aria-label={`Delete ${row.distance} PB`}
-                        className="grid h-8 w-8 place-items-center rounded-[8px] border border-[var(--line)] text-[var(--muted)] hover:bg-red-500/10 hover:text-red-600 dark:hover:text-red-400"
-                      >
-                        <Trash2 className="h-3.5 w-3.5" />
-                      </button>
-                    )}
-                  </div>
-                </div>
-              ))}
-            </div>
-          </div>
-        )}
-      </section>
-
-      <div className="flex items-start gap-2.5 px-1 text-[11.5px] leading-relaxed text-[var(--muted)]">
-        <Info className="mt-0.5 h-4 w-4 shrink-0" />
-        <p>
-          Projected equivalents use the Riegel formula (1.06) from your recent recorded runs and are
-          never treated as confirmed records.
+        <p className={`mt-1 text-xs font-semibold ${T.muted}`}>
+          Tap any time (MM:SS) and press Save to update your official benchmark.
         </p>
       </div>
 
-      {/* Confirm / Edit PB Modal */}
-      {editingDist && (
-        <div
-          className="fixed inset-0 z-50 flex items-center justify-center bg-black/55 p-4 backdrop-blur-[2px]"
-          onMouseDown={(e) => {
-            if (e.target === e.currentTarget) setEditingDist(null);
-          }}
-        >
-          <div
-            role="dialog"
-            aria-modal="true"
-            aria-label={`Confirm ${editingDist} Personal Best`}
-            className="w-full max-w-[460px] rounded-2xl border border-[var(--line)] bg-[var(--surface)] p-6 text-[var(--ink)] shadow-2xl"
-          >
-            <div className="flex items-center justify-between border-b border-[var(--line)] pb-3.5">
-              <h2 className="text-[19px] font-bold tracking-[-0.035em] text-[var(--ink)]">
-                Confirm {editingDist} personal best
-              </h2>
-              <button
-                type="button"
-                onClick={() => setEditingDist(null)}
-                aria-label="Close modal"
-                className="grid h-8 w-8 place-items-center rounded-lg text-[var(--muted)] hover:bg-[var(--surface-2)] hover:text-[var(--ink)]"
-              >
-                <X className="h-4 w-4" />
-              </button>
-            </div>
+      {/* 4 V2 Trophy Cards */}
+      <div className="grid grid-cols-1 gap-5 sm:grid-cols-2 lg:grid-cols-4">
+        {DISTANCES.map((cfg) => {
+          const d = getDom(cfg.domId, isDark);
+          const saved = bests.find((p) => p.distance_label === cfg.label);
+          const secVal = parseDurationToSeconds(draftValues[cfg.label]) ?? saved?.duration_s ?? null;
+          return (
+            <div key={cfg.label} className={`space-y-4 rounded-3xl border p-6 ${T.card}`}>
+              <div className="flex items-center justify-between">
+                <div
+                  className={`flex h-14 w-14 items-center justify-center rounded-2xl border ${d.soft} ${d.border} ${d.text}`}
+                >
+                  <DuoIcon name="trophy" className="h-9 w-9" />
+                </div>
+                <span className={`rounded-xl px-2.5 py-1 text-[11px] font-extrabold tabular-nums ${d.soft} ${d.text}`}>
+                  {fmtPace(cfg.meters, secVal)}
+                </span>
+              </div>
 
-            <form onSubmit={(e) => void handleSavePb(e)} className="mt-4 space-y-4">
               <div>
-                <label className="block text-[11.5px] font-semibold text-[var(--muted)]">
-                  Confirmed time (mm:ss or h:mm:ss) *
-                </label>
+                <span className={`text-xs font-extrabold uppercase ${T.muted}`}>{cfg.title}</span>
                 <input
                   type="text"
-                  required
-                  autoFocus
-                  placeholder="24:30"
-                  value={durationStr}
-                  onChange={(e) => setDurationStr(e.target.value)}
-                  className="mt-1 block w-full rounded-[9px] border border-[var(--line-strong)] bg-[var(--input-bg)] px-3 py-2 font-mono text-[13px] text-[var(--ink)] focus:border-[var(--blue)] focus:outline-none"
+                  placeholder="MM:SS"
+                  value={draftValues[cfg.label]}
+                  onChange={(e) =>
+                    setDraftValues((prev) => ({ ...prev, [cfg.label]: e.target.value }))
+                  }
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter') void handleSavePB(cfg);
+                  }}
+                  className={`mt-1 w-full rounded-xl bg-transparent font-display text-3xl font-extrabold tabular-nums focus:outline-none ${T.text}`}
                 />
               </div>
 
-              <div>
-                <label className="block text-[11.5px] font-semibold text-[var(--muted)]">
-                  Date achieved *
-                </label>
-                <input
-                  type="date"
-                  required
-                  value={achievedDate}
-                  onChange={(e) => setAchievedDate(e.target.value)}
-                  className="mt-1 block w-full rounded-[9px] border border-[var(--line-strong)] bg-[var(--input-bg)] px-3 py-2 font-mono text-[13px] text-[var(--ink)] focus:border-[var(--blue)] focus:outline-none"
-                />
-              </div>
-
-              <div>
-                <label className="block text-[11.5px] font-semibold text-[var(--muted)]">
-                  Notes
-                </label>
-                <input
-                  type="text"
-                  placeholder="Race, track time trial, GPS watch..."
-                  value={notes}
-                  onChange={(e) => setNotes(e.target.value)}
-                  className="mt-1 block w-full rounded-[9px] border border-[var(--line-strong)] bg-[var(--input-bg)] px-3 py-2 text-[13px] text-[var(--ink)] focus:border-[var(--blue)] focus:outline-none"
-                />
-              </div>
-
-              <div className="flex justify-end gap-2 border-t border-[var(--line)] pt-4">
+              <div className="flex items-center justify-between">
+                <span className={`text-[11px] font-bold ${T.muted}`}>
+                  {saved ? saved.achieved_date : 'Auto / manual'}
+                </span>
                 <button
                   type="button"
-                  onClick={() => setEditingDist(null)}
-                  className="h-9 rounded-[9px] border border-[var(--line-strong)] bg-[var(--surface)] px-4 text-[12.5px] font-semibold text-[var(--ink)] hover:bg-[var(--surface-2)]"
+                  disabled={savingDist === cfg.label}
+                  onClick={() => void handleSavePB(cfg)}
+                  className={`cursor-pointer rounded-xl px-3 py-1.5 font-display text-xs font-bold disabled:opacity-50 ${T.btnNeutral}`}
                 >
-                  Cancel
-                </button>
-                <button
-                  type="submit"
-                  disabled={saving}
-                  className="h-9 rounded-[9px] bg-[var(--blue)] px-4 text-[12.5px] font-bold text-[var(--blue-btn-text)] transition-opacity hover:opacity-90 disabled:opacity-50"
-                >
-                  {saving ? 'Saving...' : 'Save PB'}
+                  {savingDist === cfg.label ? '...' : 'Save'}
                 </button>
               </div>
-            </form>
+            </div>
+          );
+        })}
+      </div>
+
+      {/* Consistency Records Strip */}
+      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+        <div className={`flex items-center justify-between rounded-3xl border p-6 ${T.card}`}>
+          <div className="flex items-center gap-4">
+            <span
+              className={`flex h-14 w-14 items-center justify-center rounded-2xl border ${getDom('reading', isDark).soft} ${getDom('reading', isDark).border} ${getDom('reading', isDark).text}`}
+            >
+              <DuoIcon name="flame" className="h-8 w-8" />
+            </span>
+            <div>
+              <span className={`text-xs font-extrabold uppercase ${T.muted}`}>Best Clean Streak</span>
+              <div className={`font-display text-3xl font-extrabold tabular-nums ${T.text}`}>
+                {pornFree.bestStreak} days
+              </div>
+            </div>
           </div>
+          <span className={`rounded-xl px-3 py-1 text-xs font-extrabold ${getDom('reading', isDark).soft} ${getDom('reading', isDark).text}`}>
+            Current {pornFree.currentStreak}d
+          </span>
         </div>
-      )}
+
+        <div className={`flex items-center justify-between rounded-3xl border p-6 ${T.card}`}>
+          <div className="flex items-center gap-4">
+            <span
+              className={`flex h-14 w-14 items-center justify-center rounded-2xl border ${getDom('running', isDark).soft} ${getDom('running', isDark).border} ${getDom('running', isDark).text}`}
+            >
+              <DuoIcon name="running" className="h-8 w-8" />
+            </span>
+            <div>
+              <span className={`text-xs font-extrabold uppercase ${T.muted}`}>Longest Run</span>
+              <div className={`font-display text-3xl font-extrabold tabular-nums ${T.text}`}>
+                {longestRunKm.toFixed(1)} km
+              </div>
+            </div>
+          </div>
+          <span className={`rounded-xl px-3 py-1 text-xs font-extrabold ${getDom('running', isDark).soft} ${getDom('running', isDark).text}`}>
+            {runs.length} runs logged
+          </span>
+        </div>
+      </div>
     </div>
   );
 }

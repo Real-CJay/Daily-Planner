@@ -1,459 +1,299 @@
-﻿import { useCallback, useEffect, useMemo, useState } from 'react';
-import { Link } from 'react-router-dom';
-import {
-  AlertTriangle,
-  ArrowRight,
-  Calendar,
-  Check,
-  ChevronLeft,
-  ChevronRight,
-  HeartPulse,
-  Route,
-  Sparkles,
-} from 'lucide-react';
-import { getLocalDateString, getMondayWeekStart } from '@/lib/datetime';
+﻿import { useCallback, useEffect, useMemo, useState, type MouseEvent } from 'react';
+import { getDom, getV2Theme } from '@/design-system/v2Theme';
+import { useFeedback } from '@/components/feedback/FeedbackContext';
 import { useAuth } from '@/modules/auth/AuthContext';
+import { useTheme } from '@/modules/theme/ThemeContext';
+import { getLocalDateString, getMondayWeekStart } from '@/lib/datetime';
+import { addDaysIso, getIsoWeekday } from '@/modules/calendar/scheduleEngine';
+import { listScheduleBlocks, listScheduleCompletions } from '@/modules/calendar/repository';
 import { listRunningSessions } from '@/modules/running/repository';
-import { formatPace } from '@/modules/running/calculations';
-import { listPersonalBests } from '@/modules/analytics/repository';
-import { listReadinessCheckIns, listScheduleBlocks } from '@/modules/calendar/repository';
-import { addDaysIso } from '@/modules/calendar/scheduleEngine';
-import { listPlannedWorkouts } from '@/modules/plan/repository';
-import {
-  buildCompactCoachContext,
-  computeDeterministicWeeklyReview,
-} from '@/modules/coach/coachEngine';
-import {
-  listWeeklyReviews,
-  requestServerCoachReply,
-  upsertWeeklyReview,
-} from '@/modules/coach/repository';
+import { listHabitLogs } from '@/modules/habits/repository';
+import { calculateHabitStreak, PORN_FREE_HABIT_KEY } from '@/modules/habits/streakEngine';
+import { listWeeklyReviews, upsertWeeklyReview } from '@/modules/coach/repository';
 import type {
-  PersonalBest,
-  PlannedWorkout,
-  ReadinessCheckIn,
+  HabitLog,
   RunningSession,
   ScheduleBlock,
+  ScheduleCompletion,
   WeeklyReviewRecord,
 } from '@/types/domain';
 
-function formatShortDate(iso: string): string {
+function fmtShort(iso: string): string {
   const [y, m, d] = iso.split('-').map(Number);
   const dt = new Date(Date.UTC(y, (m || 1) - 1, d || 1));
-  return dt.toLocaleDateString('en-US', {
-    month: 'short',
-    day: 'numeric',
-    timeZone: 'UTC',
-  });
+  const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+  return `${months[dt.getUTCMonth()]} ${d}`;
+}
+
+function occursOnDate(block: ScheduleBlock, dateIso: string): boolean {
+  if (!block.is_recurring && !block.start_time) return false;
+  if (block.is_recurring && block.recurrence_days.length > 0) {
+    return block.recurrence_days.includes(getIsoWeekday(dateIso));
+  }
+  return block.block_date === dateIso;
 }
 
 export function WeeklyReviewPage() {
   const { user, profile } = useAuth();
+  const { resolvedTheme } = useTheme();
+  const { triggerConfetti, pushToast } = useFeedback();
+
+  const isDark = resolvedTheme === 'dark';
+  const T = useMemo(() => getV2Theme(isDark), [isDark]);
+
   const tz = profile?.timezone ?? 'Asia/Colombo';
-  const today = getLocalDateString(new Date(), tz);
+  const today = useMemo(() => getLocalDateString(new Date(), tz), [tz]);
+  const currentWeekStart = useMemo(() => getMondayWeekStart(today), [today]);
 
-  const [selectedWeekStart, setSelectedWeekStart] = useState(() => getMondayWeekStart(today));
-  const selectedWeekEnd = useMemo(() => addDaysIso(selectedWeekStart, 6), [selectedWeekStart]);
+  const [weekStart, setWeekStart] = useState(currentWeekStart);
+  const weekDates = useMemo(
+    () => Array.from({ length: 7 }, (_, i) => addDaysIso(weekStart, i)),
+    [weekStart]
+  );
+  const weekEnd = weekDates[6];
 
-  const [sessions, setSessions] = useState<RunningSession[]>([]);
-  const [pbs, setPbs] = useState<PersonalBest[]>([]);
-  const [planned, setPlanned] = useState<PlannedWorkout[]>([]);
   const [blocks, setBlocks] = useState<ScheduleBlock[]>([]);
-  const [checkIns, setCheckIns] = useState<ReadinessCheckIn[]>([]);
-  const [savedReviews, setSavedReviews] = useState<WeeklyReviewRecord[]>([]);
+  const [completions, setCompletions] = useState<ScheduleCompletion[]>([]);
+  const [runs, setRuns] = useState<RunningSession[]>([]);
+  const [habits, setHabits] = useState<HabitLog[]>([]);
+  const [reviews, setReviews] = useState<WeeklyReviewRecord[]>([]);
 
-  const [reflection, setReflection] = useState('');
-  const [loading, setLoading] = useState(true);
+  const [wins, setWins] = useState('');
+  const [adjustments, setAdjustments] = useState('');
+  const [nextFocus, setNextFocus] = useState('');
   const [saving, setSaving] = useState(false);
-  const [generatingAi, setGeneratingAi] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const [notice, setNotice] = useState<string | null>(null);
 
   const loadData = useCallback(async () => {
     if (!user) return;
-    setLoading(true);
-    setError(null);
-    try {
-      const [runRows, pbRows, planRows, blockRows, checkInRows, reviewRows] = await Promise.all([
-        listRunningSessions(user.id),
-        listPersonalBests(user.id).catch(() => [] as PersonalBest[]),
-        listPlannedWorkouts(user.id, selectedWeekStart, selectedWeekEnd).catch(
-          () => [] as PlannedWorkout[]
-        ),
-        listScheduleBlocks(user.id).catch(() => [] as ScheduleBlock[]),
-        listReadinessCheckIns(user.id, 60).catch(() => [] as ReadinessCheckIn[]),
-        listWeeklyReviews(user.id, 16).catch(() => [] as WeeklyReviewRecord[]),
-      ]);
-      setSessions(runRows);
-      setPbs(pbRows);
-      setPlanned(planRows);
-      setBlocks(blockRows);
-      setCheckIns(checkInRows);
-      setSavedReviews(reviewRows);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to load weekly review.');
-    } finally {
-      setLoading(false);
+    const [b, c, r, h, revList] = await Promise.all([
+      listScheduleBlocks(user.id),
+      listScheduleCompletions(user.id, weekStart, weekEnd),
+      listRunningSessions(user.id),
+      listHabitLogs(user.id, PORN_FREE_HABIT_KEY),
+      listWeeklyReviews(user.id, 12),
+    ]);
+    setBlocks(b);
+    setCompletions(c);
+    setRuns(r);
+    setHabits(h);
+    setReviews(revList);
+
+    const match = revList.find((rv) => rv.week_start === weekStart);
+    if (match) {
+      const snap = (match.summary_snapshot ?? {}) as Record<string, unknown>;
+      setWins(typeof snap.wins === 'string' ? snap.wins : '');
+      setAdjustments(typeof snap.adjustments === 'string' ? snap.adjustments : '');
+      setNextFocus(typeof snap.nextFocus === 'string' ? snap.nextFocus : '');
+    } else {
+      setWins('');
+      setAdjustments('');
+      setNextFocus('');
     }
-  }, [user, selectedWeekStart, selectedWeekEnd]);
+  }, [user, weekStart, weekEnd]);
 
   useEffect(() => {
     void loadData();
   }, [loadData]);
 
-  const review = useMemo(
+  const completionSet = useMemo(() => {
+    const s = new Set<string>();
+    for (const c of completions) {
+      if (c.status === 'COMPLETED') s.add(`${c.block_id}__${c.occurrence_date}`);
+    }
+    return s;
+  }, [completions]);
+
+  const { scheduledCount, doneCount } = useMemo(() => {
+    let sched = 0;
+    let done = 0;
+    for (const iso of weekDates) {
+      for (const blk of blocks) {
+        if (occursOnDate(blk, iso)) {
+          sched++;
+          if (completionSet.has(`${blk.id}__${iso}`)) done++;
+        }
+      }
+    }
+    return { scheduledCount: sched, doneCount: done };
+  }, [blocks, weekDates, completionSet]);
+
+  const weeklyRunKm = useMemo(
     () =>
-      computeDeterministicWeeklyReview({
-        referenceDate: selectedWeekStart,
-        sessions,
-        plannedWorkouts: planned,
-        blocks,
-        checkIns,
-      }),
-    [selectedWeekStart, sessions, planned, blocks, checkIns]
+      runs
+        .filter((r) => r.session_date >= weekStart && r.session_date <= weekEnd)
+        .reduce((acc, r) => acc + (r.distance_m || 0) / 1000, 0),
+    [runs, weekStart, weekEnd]
   );
 
-  const savedRecord = useMemo(
-    () => savedReviews.find((r) => r.week_start === selectedWeekStart) ?? null,
-    [savedReviews, selectedWeekStart]
+  const strengthCount = useMemo(
+    () => completions.filter((c) => c.status === 'COMPLETED' && c.strength_focus !== null).length,
+    [completions]
   );
 
-  useEffect(() => {
-    setReflection(savedRecord?.user_reflection ?? '');
-  }, [savedRecord, selectedWeekStart]);
+  const pornFree = useMemo(
+    () => calculateHabitStreak(PORN_FREE_HABIT_KEY, habits, today),
+    [habits, today]
+  );
 
-  const canCallGemini = Boolean(profile?.ai_enabled && profile?.ai_privacy_consent_acknowledged);
+  const score = Math.min(
+    100,
+    Math.round(
+      (doneCount / Math.max(1, scheduledCount)) * 60 +
+        (pornFree.currentStreak > 0 ? 25 : 0) +
+        (weeklyRunKm > 0 ? 15 : 0)
+    )
+  );
 
-  async function handleSaveReflection() {
-    if (!user) return;
+  async function handleSave(e: MouseEvent) {
+    if (!user || saving) return;
     setSaving(true);
-    setError(null);
-    setNotice(null);
     try {
+      const reflectionText = [
+        wins.trim() ? `Wins: ${wins.trim()}` : '',
+        adjustments.trim() ? `Adjustments: ${adjustments.trim()}` : '',
+        nextFocus.trim() ? `Next Focus: ${nextFocus.trim()}` : '',
+      ]
+        .filter(Boolean)
+        .join('\n');
+
       await upsertWeeklyReview(user.id, {
-        week_start: review.weekStart,
-        week_end: review.weekEnd,
-        summary_snapshot: review as unknown as Record<string, unknown>,
-        ai_narrative: savedRecord?.ai_narrative ?? null,
-        ai_model: savedRecord?.ai_model ?? null,
-        user_reflection: reflection.trim() ? reflection.trim() : null,
+        week_start: weekStart,
+        week_end: weekEnd,
+        summary_snapshot: {
+          score,
+          doneCount,
+          scheduledCount,
+          weeklyRunKm: Number(weeklyRunKm.toFixed(1)),
+          strengthCount,
+          wins: wins.trim(),
+          adjustments: adjustments.trim(),
+          nextFocus: nextFocus.trim(),
+        },
+        ai_narrative: null,
+        ai_model: null,
+        user_reflection: reflectionText || null,
       });
+      triggerConfetti(e.clientX, e.clientY);
+      pushToast('Weekly review saved!', '#10B981');
       await loadData();
-      setNotice(`Saved reflection for ${formatShortDate(review.weekStart)}.`);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Unable to save weekly review.');
     } finally {
       setSaving(false);
     }
   }
 
-  async function handleGenerateAiNarrative() {
-    if (!user) return;
-    setGeneratingAi(true);
-    setError(null);
-    setNotice(null);
-
-    try {
-      const compactContext = buildCompactCoachContext({
-        today,
-        profile: {
-          timezone: tz,
-          current_phase: profile?.current_phase ?? 'REBUILDING',
-          immediate_goal: profile?.immediate_goal ?? 'Rebuild consistent pain-free running',
-          first_major_5k_goal_s: profile?.first_major_5k_goal_s ?? 1200,
-          long_term_5k_goal_s: profile?.long_term_5k_goal_s ?? 1050,
-          ai_share_notes: profile?.ai_share_notes ?? false,
-          ai_share_recovery: profile?.ai_share_recovery ?? true,
-          ai_share_karate: profile?.ai_share_karate ?? true,
-          ai_share_commitments: profile?.ai_share_commitments ?? false,
-        },
-        sessions,
-        personalBests: pbs,
-        plannedWorkouts: planned,
-        blocks,
-        checkIns,
-      });
-
-      const res = await requestServerCoachReply({
-        mode: 'WEEKLY_REVIEW',
-        message: `Weekly review for ${review.weekStart} to ${review.weekEnd}`,
-        context: compactContext,
-        weeklySummary: review,
-        preferredModel: profile?.ai_preferred_model || 'gemini-4-hydrogen',
-      });
-
-      await upsertWeeklyReview(user.id, {
-        week_start: review.weekStart,
-        week_end: review.weekEnd,
-        summary_snapshot: review as unknown as Record<string, unknown>,
-        ai_narrative: res.reply,
-        ai_model: res.model,
-        user_reflection: reflection.trim() ? reflection.trim() : null,
-      });
-
-      await loadData();
-      setNotice(`Generated and cached AI summary for ${formatShortDate(review.weekStart)}.`);
-    } catch (err) {
-      setError(
-        err instanceof Error
-          ? `${err.message} (Deterministic summary remains complete.)`
-          : 'Could not reach `/api/coach`.'
-      );
-    } finally {
-      setGeneratingAi(false);
-    }
-  }
+  const circ = 2 * Math.PI * 46;
+  const readDom = getDom('reading', isDark);
+  const runDom = getDom('running', isDark);
+  const strDom = getDom('strength', isDark);
 
   return (
-    <div className="space-y-7 pb-6">
-      {/* Studio Header (Common Default Stride Blue) */}
-      <header className="flex flex-col justify-between gap-4 sm:flex-row sm:items-end">
-        <h1 className="text-[34px] font-bold leading-[1.08] tracking-[-0.055em] text-[var(--ink)] sm:text-[42px]">
-          A look at your <em className="not-italic text-[var(--blue)]">week.</em>
+    <div className="mx-auto max-w-3xl animate-pop space-y-6">
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <h1 className={`font-display text-3xl font-extrabold tracking-tight ${T.text}`}>
+          Weekly Review
         </h1>
-
         <div className="flex items-center gap-2">
           <button
             type="button"
-            onClick={() => setSelectedWeekStart((w) => addDaysIso(w, -7))}
-            aria-label="Previous week"
-            className="grid h-9 w-9 place-items-center rounded-[8px] border border-[var(--line)] bg-[var(--surface)] text-[var(--ink)] transition-colors hover:border-[var(--blue)]/40 hover:bg-[var(--blue-lite)] hover:text-[var(--blue)]"
+            onClick={() => setWeekStart((w) => addDaysIso(w, -7))}
+            className={`h-9 w-9 cursor-pointer rounded-xl font-extrabold ${T.btnNeutral}`}
           >
-            <ChevronLeft className="h-4 w-4" />
+            ‹
           </button>
+          <span className={`px-2 font-display text-xs font-extrabold tabular-nums ${T.text}`}>
+            {fmtShort(weekStart)} – {fmtShort(weekEnd)}
+          </span>
           <button
             type="button"
-            onClick={() => setSelectedWeekStart(getMondayWeekStart(today))}
-            className="h-9 rounded-[8px] border border-[var(--line)] bg-[var(--surface)] px-3.5 text-[12px] font-bold text-[var(--ink)] hover:bg-[var(--surface-2)]"
+            disabled={weekStart >= currentWeekStart}
+            onClick={() => setWeekStart((w) => addDaysIso(w, 7))}
+            className={`h-9 w-9 cursor-pointer rounded-xl font-extrabold disabled:opacity-40 ${T.btnNeutral}`}
           >
-            {formatShortDate(review.weekStart)} – {formatShortDate(review.weekEnd)}
+            ›
           </button>
-          <button
-            type="button"
-            onClick={() => setSelectedWeekStart((w) => addDaysIso(w, 7))}
-            aria-label="Next week"
-            className="grid h-9 w-9 place-items-center rounded-[8px] border border-[var(--line)] bg-[var(--surface)] text-[var(--ink)] transition-colors hover:border-[var(--blue)]/40 hover:bg-[var(--blue-lite)] hover:text-[var(--blue)]"
-          >
-            <ChevronRight className="h-4 w-4" />
-          </button>
-        </div>
-      </header>
-
-      {notice && (
-        <div className="rounded-xl border border-[var(--blue)]/30 bg-[var(--blue-lite)] px-4 py-2.5 text-xs font-semibold text-[var(--blue-ink)]">
-          {notice}
-        </div>
-      )}
-
-      {error && (
-        <div className="rounded-xl border border-red-400/40 bg-red-500/10 px-4 py-2.5 text-xs font-semibold text-red-700 dark:text-red-300">
-          {error}
-        </div>
-      )}
-
-      {/* Clean 3-Column Studio Metric Strip */}
-      <div className="grid grid-cols-1 divide-y divide-[var(--line)] rounded-[15px] border border-[var(--line)] bg-[var(--surface)] sm:grid-cols-3 sm:divide-x sm:divide-y-0">
-        <div className="px-6 py-5">
-          <span className="text-[10px] font-bold uppercase tracking-[0.11em] text-[var(--muted)]">
-            RUNNING DISTANCE
-          </span>
-          <div className="mt-2 font-mono text-[32px] font-bold leading-none tracking-[-0.06em] text-[var(--blue)] tabular-nums">
-            {loading ? '—' : (review.totalDistanceM / 1000).toFixed(1)}
-            <small className="ml-1.5 font-sans text-[14px] font-medium text-[var(--muted)]">
-              km
-            </small>
-          </div>
-          <span className="mt-1.5 block text-[11.5px] text-[var(--muted)]">
-            Previous week: {(review.previousWeekDistanceM / 1000).toFixed(1)} km
-          </span>
-        </div>
-
-        <div className="px-6 py-5">
-          <span className="text-[10px] font-bold uppercase tracking-[0.11em] text-[var(--muted)]">
-            RUNS COMPLETED
-          </span>
-          <div className="mt-2 font-mono text-[32px] font-bold leading-none tracking-[-0.06em] text-[var(--ink)] tabular-nums">
-            {loading ? '—' : review.runCount}
-          </div>
-          <span className="mt-1.5 block text-[11.5px] text-[var(--muted)]">
-            {review.runCount > 0
-              ? `Average ${formatPace(review.totalDistanceM, review.totalDurationS)}`
-              : 'No runs this week'}
-          </span>
-        </div>
-
-        <div className="px-6 py-5">
-          <span className="text-[10px] font-bold uppercase tracking-[0.11em] text-[var(--muted)]">
-            READINESS &amp; ADHERENCE
-          </span>
-          <div className="mt-2 font-mono text-[32px] font-bold leading-none tracking-[-0.06em] text-[var(--ink)] tabular-nums">
-            {loading
-              ? '—'
-              : review.avgReadinessScore !== null
-                ? `${review.avgReadinessScore}/100`
-                : '—'}
-          </div>
-          <span className="mt-1.5 block text-[11.5px] text-[var(--muted)]">
-            {review.adherencePct !== null
-              ? `${review.adherencePct}% plan adherence`
-              : `${review.checkInCount} check-in(s) logged`}
-          </span>
         </div>
       </div>
 
-      {/* Two-Column Overview */}
-      <div className="grid items-start gap-5 lg:grid-cols-[1.1fr_0.9fr]">
-        <section className="rounded-[15px] border border-[var(--line)] bg-[var(--surface)] p-6">
-          <h2 className="text-[20px] font-bold tracking-[-0.04em] text-[var(--ink)]">
-            This week at a glance
-          </h2>
-          
+      <div className={`space-y-6 rounded-3xl border p-6 ${T.card}`}>
+        {/* Score Ring + 3 KPIs */}
+        <div className={`flex flex-col items-center gap-6 border-b pb-5 sm:flex-row ${T.divider}`}>
+          <div className="relative flex h-28 w-28 shrink-0 items-center justify-center">
+            <svg className="h-full w-full -rotate-90" viewBox="0 0 110 110">
+              <circle cx="55" cy="55" r="46" stroke={T.ringTrack} strokeWidth="11" fill="none" />
+              <circle
+                cx="55"
+                cy="55"
+                r="46"
+                stroke={T.ringFill}
+                strokeWidth="11"
+                strokeLinecap="round"
+                fill="none"
+                strokeDasharray={circ}
+                strokeDashoffset={circ * (1 - score / 100)}
+              />
+            </svg>
+            <span className={`absolute font-display text-2xl font-extrabold tabular-nums ${T.text}`}>
+              {score}%
+            </span>
+          </div>
 
-          <div className="mt-4 divide-y divide-[var(--line)] border-t border-[var(--line)] text-[12.5px] text-[var(--muted)]">
-            <div className="flex items-start gap-3 py-3.5">
-              <Route className="mt-0.5 h-4 w-4 shrink-0 text-[var(--blue)]" />
-              <span>
-                {review.runCount > 0
-                  ? `You completed ${review.runCount} run(s) totalling ${(
-                      review.totalDistanceM / 1000
-                    ).toFixed(1)} km.`
-                  : 'No completed runs were recorded for this week.'}
+          <div className="grid w-full grid-cols-3 gap-3">
+            <div className={`rounded-2xl p-3.5 text-center ${readDom.soft}`}>
+              <span className={`block font-display text-xl font-extrabold tabular-nums ${readDom.text}`}>
+                {doneCount}
               </span>
+              <span className={`text-[10px] font-extrabold uppercase ${T.muted}`}>Done</span>
             </div>
-            <div className="flex items-start gap-3 py-3.5">
-              <Calendar className="mt-0.5 h-4 w-4 shrink-0 text-[var(--blue)]" />
-              <span>
-                {review.plannedRunsCount > 0
-                  ? `${review.completedPlannedCount} of ${review.plannedRunsCount} planned runs marked complete.`
-                  : 'No running workouts were planned for this week.'}
+            <div className={`rounded-2xl p-3.5 text-center ${runDom.soft}`}>
+              <span className={`block font-display text-xl font-extrabold tabular-nums ${runDom.text}`}>
+                {weeklyRunKm.toFixed(1)}
               </span>
+              <span className={`text-[10px] font-extrabold uppercase ${T.muted}`}>km</span>
             </div>
-            <div className="flex items-start gap-3 py-3.5">
-              <HeartPulse className="mt-0.5 h-4 w-4 shrink-0 text-[var(--blue)]" />
-              <span>
-                {review.checkInCount > 0
-                  ? `${review.checkInCount} readiness check-in(s) logged · ${review.painDaysCount} pain day(s).`
-                  : 'No readiness check-ins recorded for this week.'}
+            <div className={`rounded-2xl p-3.5 text-center ${strDom.soft}`}>
+              <span className={`block font-display text-xl font-extrabold tabular-nums ${strDom.text}`}>
+                {strengthCount}/4
               </span>
-            </div>
-            {review.watchouts.length > 0 && (
-              <div className="flex items-start gap-3 py-3.5 text-amber-700 dark:text-amber-300">
-                <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
-                <span>{review.watchouts.join(' · ')}</span>
-              </div>
-            )}
-          </div>
-        </section>
-
-        <aside className="rounded-[15px] border border-[var(--line)] bg-[var(--surface)] p-6">
-          <h2 className="text-[20px] font-bold tracking-[-0.04em] text-[var(--ink)]">
-            Outside running
-          </h2>
-          
-
-          <div className="mt-4 divide-y divide-[var(--line)] border-t border-[var(--line)] text-[12.5px]">
-            <div className="flex items-center justify-between py-3.5 text-[var(--muted)]">
-              <span>Karate</span>
-              <b className="font-mono text-[var(--ink)]">
-                {review.karateSessionsCount} ({review.karateMinutes} min)
-              </b>
-            </div>
-            <div className="flex items-center justify-between py-3.5 text-[var(--muted)]">
-              <span>Recovery blocks</span>
-              <b className="font-mono text-[var(--ink)]">{review.recoveryDaysCount}</b>
-            </div>
-            <div className="flex items-center justify-between py-3.5 text-[var(--muted)]">
-              <span>Music &amp; university blocks</span>
-              <b className="font-mono text-[var(--ink)]">{review.otherCommitmentsCount}</b>
+              <span className={`text-[10px] font-extrabold uppercase ${T.muted}`}>Strength</span>
             </div>
           </div>
+        </div>
 
-          <div className="mt-4 border-t border-[var(--line)] pt-4">
-            <Link
-              to="/calendar"
-              className="inline-flex items-center gap-1.5 text-[12px] font-semibold text-[var(--blue)] hover:underline"
-            >
-              <span>View your calendar</span>
-              <ArrowRight className="h-3.5 w-3.5" />
-            </Link>
-          </div>
-        </aside>
-      </div>
+        {/* 3 Clean Reflection Fields */}
+        <div className="grid grid-cols-1 gap-4">
+          {[
+            { label: 'Wins', val: wins, set: setWins, domId: 'reading' as const, placeholder: 'What went well this week?' },
+            { label: 'Adjustments', val: adjustments, set: setAdjustments, domId: 'karate' as const, placeholder: 'What needs tightening up?' },
+            { label: 'Next Week Focus', val: nextFocus, set: setNextFocus, domId: 'running' as const, placeholder: 'Primary target for next week...' },
+          ].map((f) => (
+            <div key={f.label} className="space-y-1.5">
+              <span className={`text-xs font-extrabold uppercase tracking-wider ${getDom(f.domId, isDark).text}`}>
+                {f.label}
+              </span>
+              <input
+                value={f.val}
+                onChange={(e) => f.set(e.target.value)}
+                placeholder={f.placeholder}
+                className={`w-full rounded-xl border px-4 py-3 font-display text-sm font-bold focus:outline-none ${T.input}`}
+              />
+            </div>
+          ))}
+        </div>
 
-      {/* Personal Reflection */}
-      <section className="rounded-[15px] border border-[var(--line)] bg-[var(--surface)] p-6">
-        <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
-          <div>
-            <h2 className="text-[20px] font-bold tracking-[-0.04em] text-[var(--ink)]">
-              Your reflection
-            </h2>
-            
-          </div>
+        <div className="flex items-center justify-between">
+          <span className={`text-xs font-bold ${T.muted}`}>
+            {reviews.length} saved review{reviews.length === 1 ? '' : 's'}
+          </span>
           <button
             type="button"
             disabled={saving}
-            onClick={() => void handleSaveReflection()}
-            className="inline-flex h-10 items-center gap-2 rounded-[9px] border border-[var(--blue)]/35 bg-[var(--blue-lite)] px-4 text-[12.5px] font-bold text-[var(--blue-ink)] transition-opacity hover:opacity-90 disabled:opacity-50"
+            onClick={(e) => void handleSave(e)}
+            className={`cursor-pointer rounded-xl px-6 py-3 font-display text-sm font-bold disabled:opacity-50 ${T.btnSuccess}`}
           >
-            <Check className="h-4 w-4" />
-            <span>{saving ? 'Saving...' : 'Save reflection'}</span>
+            {saving ? 'Saving...' : 'Save Review'}
           </button>
         </div>
-
-        <textarea
-          rows={4}
-          value={reflection}
-          onChange={(e) => setReflection(e.target.value)}
-          placeholder="How did you feel? What would you adjust next week?"
-          className="w-full rounded-[10px] border border-[var(--line)] bg-[var(--surface-2)] p-4 text-[13px] leading-relaxed text-[var(--ink)] placeholder:text-[var(--faint)] focus:border-[var(--blue)] focus:outline-none"
-        />
-      </section>
-
-      {/* AI Narrative Summary */}
-      <section className="rounded-[15px] border border-[var(--line)] bg-[var(--surface)] p-6">
-        <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
-          <div>
-            <h2 className="text-[20px] font-bold tracking-[-0.04em] text-[var(--ink)]">
-              Summary for next week
-            </h2>
-            <p className="mt-0.5 text-[12px] text-[var(--muted)]">
-              Optional AI narrative cached in Supabase from your recorded data.
-            </p>
-          </div>
-          <button
-            type="button"
-            disabled={!canCallGemini || generatingAi}
-            onClick={() => void handleGenerateAiNarrative()}
-            className="inline-flex h-10 items-center gap-2 rounded-[9px] bg-[var(--blue)] px-4 text-[12.5px] font-bold text-[var(--blue-btn-text)] transition-opacity hover:opacity-90 disabled:opacity-45"
-          >
-            <Sparkles className="h-4 w-4" />
-            <span>
-              {generatingAi
-                ? 'Generating...'
-                : savedRecord?.ai_narrative
-                  ? 'Refresh summary'
-                  : 'Generate summary'}
-            </span>
-          </button>
-        </div>
-
-        {savedRecord?.ai_narrative ? (
-          <div className="space-y-2 border-t border-[var(--line)] pt-4">
-            <div className="whitespace-pre-wrap text-[13px] leading-[1.8] text-[var(--ink)]">
-              {savedRecord.ai_narrative}
-            </div>
-            <div className="font-mono text-[10.5px] text-[var(--faint)]">
-              {savedRecord.ai_model ?? 'gemini'} · Saved {savedRecord.updated_at.slice(0, 10)}
-            </div>
-          </div>
-        ) : (
-          <p className="text-[12.5px] leading-relaxed text-[var(--muted)]">
-            {canCallGemini
-              ? 'Generate a grounded summary when you are ready.'
-              : 'Enable AI features in Settings to generate an optional weekly narrative.'}
-          </p>
-        )}
-      </section>
+      </div>
     </div>
   );
 }

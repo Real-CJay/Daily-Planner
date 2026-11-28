@@ -1,501 +1,614 @@
-﻿import { useEffect, useMemo, useState, type FormEvent } from 'react';
-import { Check, HeartPulse, Plus, Smartphone, Trash2 } from 'lucide-react';
-import { getLocalDateString } from '@/lib/datetime';
+﻿import { useEffect, useMemo, useState, type FormEvent, type MouseEvent } from 'react';
+import { useNavigate } from 'react-router-dom';
+import { DuoIcon, type DuoIconName } from '@/design-system/DuoIcon';
+import { getDom, getV2Theme, type DomainId } from '@/design-system/v2Theme';
+import { useFeedback } from '@/components/feedback/FeedbackContext';
 import { useAuth } from '@/modules/auth/AuthContext';
-import {
-  calculateHealthSummary,
-  HEALTH_PRESET_TEMPLATES,
-  loadHealthStore,
-  saveHealthStore,
-  type HealthRuleCategory,
-  type HealthStore,
-} from '@/modules/health/healthEngine';
+import { useTheme } from '@/modules/theme/ThemeContext';
+import { getLocalDateString } from '@/lib/datetime';
+import { loadHealthStore, saveHealthStore, type HealthStore } from '@/modules/health/healthEngine';
 
-const DAY_LETTERS = ['M', 'T', 'W', 'T', 'F', 'S', 'S'];
+type MealStatus = 'pending' | 'clean' | 'protein' | 'treat';
+type SnackCategory = 'dairy' | 'buns' | 'sweet';
 
-const CATEGORY_LABELS: Record<HealthRuleCategory, string> = {
-  SUGAR: 'Sugar control',
-  DIET: 'Clean diet',
-  SCREEN_TIME: 'Screen time',
-  HYDRATION: 'Hydration',
-  HABIT: 'Health habit',
+interface MealSlot {
+  id: string;
+  slot: string;
+  status: MealStatus;
+}
+
+interface SnackItem {
+  id: string;
+  name: string;
+  category: SnackCategory;
+}
+
+interface DailyHealthV2State {
+  meals: MealSlot[];
+  snacks: SnackItem[];
+  soreZones: string[];
+  socialMin: number;
+  socialCapMin: number;
+}
+
+const DEFAULT_DAILY_V2: DailyHealthV2State = {
+  meals: [
+    { id: 'ml-1', slot: 'Breakfast', status: 'pending' },
+    { id: 'ml-2', slot: 'Lunch', status: 'pending' },
+    { id: 'ml-3', slot: 'Dinner', status: 'pending' },
+    { id: 'ml-4', slot: 'Pre-Run', status: 'pending' },
+  ],
+  snacks: [],
+  soreZones: [],
+  socialMin: 0,
+  socialCapMin: 30,
 };
 
-function formatMinCompact(mins: number): string {
-  const h = Math.floor(mins / 60);
-  const m = mins % 60;
-  if (h === 0) return `${m}m`;
-  if (m === 0) return `${h}h`;
-  return `${h}h ${m}m`;
+const MEAL_CYCLE: MealStatus[] = ['pending', 'clean', 'protein', 'treat'];
+const MEAL_LABELS: Record<MealStatus, string> = {
+  pending: 'Tap to log',
+  clean: 'Clean',
+  protein: 'High-Protein',
+  treat: 'Treat',
+};
+
+const SNACK_CATS: { id: SnackCategory; label: string; domId: DomainId }[] = [
+  { id: 'dairy', label: 'Dairy & Drinks', domId: 'running' },
+  { id: 'buns', label: 'Buns & Hoppers', domId: 'karate' },
+  { id: 'sweet', label: 'Sweet / Light', domId: 'music' },
+];
+
+const BODY_ZONES = [
+  { id: 'shoulders', label: 'Shoulders', cx: 60, cy: 52, r: 12 },
+  { id: 'lowerback', label: 'Lower Back', cx: 60, cy: 84, r: 12 },
+  { id: 'hips', label: 'Hips', cx: 60, cy: 112, r: 13 },
+  { id: 'knees', label: 'Knees', cx: 60, cy: 152, r: 13 },
+  { id: 'calves', label: 'Calves', cx: 60, cy: 186, r: 12 },
+];
+
+const RULE_ICONS: DuoIconName[] = ['sugar', 'meal', 'leaf'];
+
+function fmtClock(totalSec: number): string {
+  const m = Math.floor(totalSec / 60);
+  const s = totalSec % 60;
+  return `${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`;
 }
 
 export function HealthPage() {
+  const navigate = useNavigate();
   const { user, profile } = useAuth();
+  const { resolvedTheme } = useTheme();
+  const { triggerConfetti, pushToast } = useFeedback();
+
+  const isDark = resolvedTheme === 'dark';
+  const T = useMemo(() => getV2Theme(isDark), [isDark]);
+  const dom = getDom('health', isDark);
+
   const tz = profile?.timezone ?? 'Asia/Colombo';
-  const today = getLocalDateString(new Date(), tz);
+  const today = useMemo(() => getLocalDateString(new Date(), tz), [tz]);
 
-  const [store, setStore] = useState<HealthStore>({
-    rules: [],
-    checkedByDate: {},
-    socialMediaLimitMin: 30,
-    screenTimeByDate: {},
+  const [store, setStore] = useState<HealthStore>(() => loadHealthStore(user?.id ?? 'guest'));
+  useEffect(() => {
+    if (user) setStore(loadHealthStore(user.id));
+  }, [user]);
+
+  const v2Key = user ? `stride_health_v2_${user.id}_${today}` : `stride_health_v2_${today}`;
+  const [daily, setDaily] = useState<DailyHealthV2State>(() => {
+    try {
+      const raw = localStorage.getItem(v2Key);
+      if (raw) {
+        const parsed = JSON.parse(raw) as Partial<DailyHealthV2State>;
+        return { ...DEFAULT_DAILY_V2, ...parsed };
+      }
+    } catch {
+      // ignore
+    }
+    return DEFAULT_DAILY_V2;
   });
-  const [title, setTitle] = useState('');
-  const [category, setCategory] = useState<HealthRuleCategory>('SUGAR');
-  const [targetNote, setTargetNote] = useState('');
-
-  // Screen time inputs for today
-  const [socialMinInput, setSocialMinInput] = useState('');
-  const [totalScreenInput, setTotalScreenInput] = useState('');
-  const [screenSavedNotice, setScreenSavedNotice] = useState(false);
 
   useEffect(() => {
-    if (!user) return;
-    const loaded = loadHealthStore(user.id);
-    setStore(loaded);
-    const todayScreen = loaded.screenTimeByDate[today];
-    if (todayScreen) {
-      setSocialMinInput(String(todayScreen.socialMediaMin));
-      setTotalScreenInput(
-        todayScreen.totalScreenMin !== null ? String(todayScreen.totalScreenMin) : ''
-      );
+    try {
+      localStorage.setItem(v2Key, JSON.stringify(daily));
+    } catch {
+      // ignore
     }
-  }, [user, today]);
+  }, [v2Key, daily]);
 
-  function updateStore(next: HealthStore) {
-    if (!user) return;
-    setStore(next);
-    saveHealthStore(user.id, next);
-  }
+  const [snackName, setSnackName] = useState('');
+  const [snackCat, setSnackCat] = useState<SnackCategory>('dairy');
+  const [mobSec, setMobSec] = useState(5 * 60);
+  const [mobRunning, setMobRunning] = useState(false);
 
-  const summary = useMemo(() => calculateHealthSummary(store, today), [store, today]);
-  const todaySet = useMemo(() => new Set(store.checkedByDate[today] ?? []), [store, today]);
-  const todayScreenLog = store.screenTimeByDate[today] ?? null;
+  useEffect(() => {
+    if (!mobRunning) return;
+    const id = window.setInterval(() => {
+      setMobSec((s) => (s <= 1 ? 0 : s - 1));
+    }, 1000);
+    return () => window.clearInterval(id);
+  }, [mobRunning]);
 
-  function toggleRuleToday(ruleId: string) {
-    const current = new Set(store.checkedByDate[today] ?? []);
-    if (current.has(ruleId)) current.delete(ruleId);
-    else current.add(ruleId);
-    updateStore({
-      ...store,
-      checkedByDate: { ...store.checkedByDate, [today]: Array.from(current) },
+  useEffect(() => {
+    if (mobRunning && mobSec === 0) {
+      setMobRunning(false);
+      triggerConfetti();
+      pushToast('5-min mobility reset complete!', '#0D9488');
+    }
+  }, [mobRunning, mobSec, triggerConfetti, pushToast]);
+
+  const topRules = store.rules.slice(0, 3);
+  const checkedToday = store.checkedByDate[today] ?? [];
+
+  function toggleRule(ruleId: string, e: MouseEvent) {
+    const already = checkedToday.includes(ruleId);
+    if (!already) triggerConfetti(e.clientX, e.clientY);
+    setStore((prev) => {
+      const cur = prev.checkedByDate[today] ?? [];
+      const nextList = already ? cur.filter((x) => x !== ruleId) : [...cur, ruleId];
+      const nextStore = {
+        ...prev,
+        checkedByDate: { ...prev.checkedByDate, [today]: nextList },
+      };
+      if (user) saveHealthStore(user.id, nextStore);
+      return nextStore;
     });
   }
 
-  function handleAddRule(e: FormEvent) {
+  function handleAddSnack(e: FormEvent) {
     e.preventDefault();
-    if (!title.trim()) return;
-    const nextRule = {
-      id: `h-${Date.now()}`,
-      title: title.trim(),
-      category,
-      targetNote: targetNote.trim() || null,
-      createdAt: today,
-    };
-    updateStore({ ...store, rules: [...store.rules, nextRule] });
-    setTitle('');
-    setTargetNote('');
+    const trimmed = snackName.trim();
+    if (!trimmed) return;
+    setDaily((prev) => ({
+      ...prev,
+      snacks: [{ id: `sn-${Date.now()}`, name: trimmed, category: snackCat }, ...prev.snacks],
+    }));
+    setSnackName('');
+    pushToast('Snack logged', '#EA580C');
   }
 
-  function handleQuickAddTemplate(tpl: (typeof HEALTH_PRESET_TEMPLATES)[number]) {
-    if (store.rules.some((r) => r.title.toLowerCase() === tpl.title.toLowerCase())) return;
-    updateStore({
-      ...store,
-      rules: [
-        ...store.rules,
-        {
-          id: `h-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
-          title: tpl.title,
-          category: tpl.category,
-          targetNote: tpl.targetNote,
-          createdAt: today,
-        },
-      ],
-    });
+  function toggleSoreZone(zid: string) {
+    setDaily((prev) => ({
+      ...prev,
+      soreZones: prev.soreZones.includes(zid)
+        ? prev.soreZones.filter((x) => x !== zid)
+        : [...prev.soreZones, zid],
+    }));
   }
 
-  function handleDeleteRule(ruleId: string) {
-    updateStore({
-      ...store,
-      rules: store.rules.filter((r) => r.id !== ruleId),
-    });
-  }
-
-  function handleSaveScreenTime(e: FormEvent) {
-    e.preventDefault();
-    const socialVal = Math.max(0, Math.round(Number(socialMinInput) || 0));
-    const totalVal = totalScreenInput.trim()
-      ? Math.max(0, Math.round(Number(totalScreenInput) || 0))
-      : null;
-
-    updateStore({
-      ...store,
-      screenTimeByDate: {
-        ...store.screenTimeByDate,
-        [today]: {
-          socialMediaMin: socialVal,
-          totalScreenMin: totalVal,
-        },
-      },
-    });
-    setScreenSavedNotice(true);
-    window.setTimeout(() => setScreenSavedNotice(false), 2000);
-  }
-
-  function handleQuickBumpSocial(delta: number) {
-    const current = Math.max(0, Number(socialMinInput) || todayScreenLog?.socialMediaMin || 0);
-    const nextVal = Math.max(0, current + delta);
-    setSocialMinInput(String(nextVal));
-    updateStore({
-      ...store,
-      screenTimeByDate: {
-        ...store.screenTimeByDate,
-        [today]: {
-          socialMediaMin: nextVal,
-          totalScreenMin: todayScreenLog?.totalScreenMin ?? null,
-        },
-      },
-    });
-  }
-
-  const currentSocialMin = todayScreenLog?.socialMediaMin ?? 0;
-  const isOverSocialLimit = todayScreenLog !== null && currentSocialMin > store.socialMediaLimitMin;
-  const socialPct =
-    store.socialMediaLimitMin > 0
-      ? Math.min(100, Math.round((currentSocialMin / store.socialMediaLimitMin) * 100))
-      : 0;
+  const proteinHits =
+    daily.meals.filter((m) => m.status === 'protein').length * 2 +
+    daily.meals.filter((m) => m.status === 'clean').length;
+  const proteinPct = Math.min(100, Math.round((proteinHits / 6) * 100));
+  const carbHits = daily.meals.filter((m) => m.status !== 'pending').length;
+  const carbPct = Math.min(100, Math.round((carbHits / 4) * 100));
+  const socialPct = Math.min(100, Math.round((daily.socialMin / Math.max(1, daily.socialCapMin)) * 100));
 
   return (
-    <div className="space-y-7 pb-6">
-      <header>
-        <h1 className="text-[34px] font-bold leading-[1.08] tracking-[-0.055em] text-[var(--ink)] sm:text-[42px]">
-          Fuel with <em className="not-italic text-[var(--health)]">discipline.</em>
-        </h1>
-      </header>
+    <div className="animate-pop space-y-6">
+      <div className="flex items-center justify-between gap-3">
+        <button
+          type="button"
+          onClick={() => navigate('/modes')}
+          className={`cursor-pointer rounded-xl px-4 py-2 text-xs font-extrabold ${T.btnWhite}`}
+        >
+          ← All Modes
+        </button>
+        <div className="flex items-center gap-2.5">
+          <span
+            className={`flex h-10 w-10 items-center justify-center rounded-xl border ${dom.soft} ${dom.border} ${dom.text}`}
+          >
+            <DuoIcon name="health" className="h-6 w-6" />
+          </span>
+          <span className={`font-display text-xl font-extrabold ${T.text}`}>Health</span>
+        </div>
+      </div>
 
-      {/* Main 2-Column Layout */}
-      <div className="grid gap-5 lg:grid-cols-[1.15fr_0.85fr]">
-        {/* Left: Today's Health Rules Checklist + Screen Time Logger */}
-        <div className="space-y-5">
-          {/* Screen Time & Social Media Card */}
-          <section className="rounded-[15px] border border-[var(--line)] bg-[var(--surface)] p-6 sm:p-7">
-            <div className="flex flex-wrap items-start justify-between gap-3">
-              <div>
-                <h2 className="text-[20px] font-bold tracking-[-0.04em] text-[var(--ink)]">
-                  Screen time &amp; social media
-                </h2>
-                <p className="mt-1 text-[12px] text-[var(--muted)]">
-                  Daily cap: {store.socialMediaLimitMin} min
-                  {summary.avgSocialMediaMin !== null
-                    ? ` · 7d avg ${formatMinCompact(summary.avgSocialMediaMin)}`
-                    : ''}
-                </p>
+      {/* 3 Daily Health Rules */}
+      <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
+        {topRules.map((r, idx) => {
+          const checked = checkedToday.includes(r.id);
+          return (
+            <button
+              key={r.id}
+              type="button"
+              onClick={(e) => toggleRule(r.id, e)}
+              className={`flex cursor-pointer items-center justify-between rounded-3xl border p-6 text-left transition-all active:scale-[0.99] ${
+                checked ? `${dom.soft} ${dom.border}` : T.card
+              }`}
+            >
+              <div className="flex items-center gap-3.5">
+                <span
+                  className={`flex h-14 w-14 shrink-0 items-center justify-center rounded-2xl ${
+                    checked ? `${dom.bg} text-white` : `${dom.soft} ${dom.text}`
+                  }`}
+                >
+                  <DuoIcon name={RULE_ICONS[idx % RULE_ICONS.length]} className="h-8 w-8" />
+                </span>
+                <span className={`font-display text-base font-extrabold leading-snug ${T.text}`}>
+                  {r.title}
+                </span>
               </div>
-              <div className="flex items-center gap-2">
-                <label className="flex items-center gap-1.5 text-[11px] font-semibold text-[var(--muted)]">
-                  <span>Cap:</span>
-                  <select
-                    value={store.socialMediaLimitMin}
-                    onChange={(e) =>
-                      updateStore({
-                        ...store,
-                        socialMediaLimitMin: Number(e.target.value),
-                      })
-                    }
-                    className="rounded-[7px] border border-[var(--line-strong)] bg-[var(--input-bg)] px-2 py-1 font-mono text-[11px] font-bold text-[var(--ink)]"
-                  >
-                    {[15, 20, 30, 45, 60, 90].map((m) => (
-                      <option key={m} value={m}>
-                        {m}m
-                      </option>
-                    ))}
-                  </select>
-                </label>
-                <div className="grid h-9 w-9 place-items-center rounded-[10px] bg-[var(--health-lite)] text-[var(--health)]">
-                  <Smartphone className="h-4 w-4" />
-                </div>
-              </div>
+              <span
+                className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-xl font-extrabold ${
+                  checked ? `${dom.bg} text-white` : `${T.cardSubtle} border text-transparent`
+                }`}
+              >
+                ✓
+              </span>
+            </button>
+          );
+        })}
+      </div>
+
+      {/* Meal & Fuel Tracker + Snack Counter */}
+      <div className="grid grid-cols-1 gap-6 lg:grid-cols-12">
+        {/* Meal & Fuel */}
+        <div className={`space-y-5 rounded-3xl border p-6 lg:col-span-7 ${T.card}`}>
+          <div className="flex items-center justify-between gap-2">
+            <div>
+              <span className={`text-[10px] font-extrabold uppercase tracking-widest ${dom.text}`}>
+                MEAL & FUEL
+              </span>
+              <h2 className={`font-display text-lg font-extrabold ${T.text}`}>
+                Tap slots to tag fuel
+              </h2>
             </div>
+            <span className={`rounded-xl px-3 py-1 text-xs font-extrabold tabular-nums ${dom.soft} ${dom.text}`}>
+              {carbHits}/4 logged
+            </span>
+          </div>
 
-            {/* Live Social Media Cap Bar */}
-            <div className="mt-4">
-              <div className="flex items-center justify-between text-[12px]">
-                <span className="font-semibold text-[var(--ink)]">
-                  Social media today:{' '}
-                  <strong
-                    className={`font-mono ${
-                      isOverSocialLimit ? 'text-red-600 dark:text-red-400' : 'text-[var(--health)]'
+          <div className="grid grid-cols-2 gap-2.5 sm:grid-cols-4">
+            {daily.meals.map((m) => {
+              const toneDom =
+                m.status === 'protein'
+                  ? getDom('strength', isDark)
+                  : m.status === 'clean'
+                    ? getDom('reading', isDark)
+                    : m.status === 'treat'
+                      ? getDom('karate', isDark)
+                      : null;
+              return (
+                <button
+                  key={m.id}
+                  type="button"
+                  onClick={() => {
+                    const next = MEAL_CYCLE[(MEAL_CYCLE.indexOf(m.status) + 1) % MEAL_CYCLE.length];
+                    setDaily((prev) => ({
+                      ...prev,
+                      meals: prev.meals.map((x) => (x.id === m.id ? { ...x, status: next } : x)),
+                    }));
+                  }}
+                  className={`flex cursor-pointer flex-col items-center gap-2 rounded-2xl border p-3.5 text-center transition-all active:scale-[0.98] ${
+                    toneDom ? `${toneDom.soft} ${toneDom.border}` : `${T.cardSubtle} ${T.surfaceHover}`
+                  }`}
+                >
+                  <span
+                    className={`flex h-10 w-10 items-center justify-center rounded-xl ${
+                      toneDom ? `${toneDom.bg} text-white` : `${T.card} ${T.muted}`
                     }`}
                   >
-                    {todayScreenLog !== null ? formatMinCompact(currentSocialMin) : 'Not logged'}
-                  </strong>
-                </span>
-                <span className="font-mono text-[11px] text-[var(--muted)]">
-                  {todayScreenLog !== null
-                    ? isOverSocialLimit
-                      ? `+${currentSocialMin - store.socialMediaLimitMin}m over cap`
-                      : `${store.socialMediaLimitMin - currentSocialMin}m left`
-                    : `${store.socialMediaLimitMin}m limit`}
+                    <DuoIcon name="meal" className="h-6 w-6" />
+                  </span>
+                  <div>
+                    <span className={`block font-display text-xs font-extrabold ${T.text}`}>
+                      {m.slot}
+                    </span>
+                    <span
+                      className={`mt-0.5 block text-[10px] font-extrabold ${
+                        toneDom ? toneDom.text : T.muted
+                      }`}
+                    >
+                      {MEAL_LABELS[m.status]}
+                    </span>
+                  </div>
+                </button>
+              );
+            })}
+          </div>
+
+          <div className="grid grid-cols-1 gap-3 pt-1 sm:grid-cols-2">
+            <div className={`space-y-2 rounded-2xl border p-3.5 ${T.cardSubtle}`}>
+              <div className="flex justify-between text-xs font-extrabold tabular-nums">
+                <span className={T.text}>Protein Target</span>
+                <span className={getDom('strength', isDark).text}>{proteinPct}%</span>
+              </div>
+              <div className={`h-2 w-full overflow-hidden rounded-full ${isDark ? 'bg-[#0A0A0A]' : 'bg-white'}`}>
+                <div
+                  className="h-full rounded-full bg-[#7C3AED] transition-all"
+                  style={{ width: `${proteinPct}%` }}
+                />
+              </div>
+            </div>
+            <div className={`space-y-2 rounded-2xl border p-3.5 ${T.cardSubtle}`}>
+              <div className="flex justify-between text-xs font-extrabold tabular-nums">
+                <span className={T.text}>Training Carbs</span>
+                <span className={dom.text}>{carbPct}%</span>
+              </div>
+              <div className={`h-2 w-full overflow-hidden rounded-full ${isDark ? 'bg-[#0A0A0A]' : 'bg-white'}`}>
+                <div
+                  className="h-full rounded-full bg-[#0D9488] transition-all"
+                  style={{ width: `${carbPct}%` }}
+                />
+              </div>
+            </div>
+          </div>
+
+          {/* Compact Social Media Cap Strip */}
+          <div className={`flex flex-wrap items-center justify-between gap-3 rounded-2xl border p-3.5 ${T.cardSubtle}`}>
+            <div className="min-w-[160px] flex-1 space-y-1.5">
+              <div className="flex justify-between text-xs font-extrabold tabular-nums">
+                <span className={T.text}>Social Media Cap</span>
+                <span className={daily.socialMin > daily.socialCapMin ? 'text-[#E11D48]' : dom.text}>
+                  {daily.socialMin} / {daily.socialCapMin}m
                 </span>
               </div>
-              <div className="mt-2 h-2 w-full overflow-hidden rounded-full bg-[var(--surface-3)]">
-                <span
-                  style={{ width: `${socialPct}%` }}
-                  className={`block h-full rounded-full transition-all ${
-                    isOverSocialLimit ? 'bg-red-500' : 'bg-[var(--health)]'
+              <div className={`h-1.5 w-full overflow-hidden rounded-full ${isDark ? 'bg-[#0A0A0A]' : 'bg-white'}`}>
+                <div
+                  className={`h-full rounded-full transition-all ${
+                    daily.socialMin > daily.socialCapMin ? 'bg-[#E11D48]' : 'bg-[#2563EB]'
                   }`}
+                  style={{ width: `${socialPct}%` }}
                 />
               </div>
             </div>
-
-            <form
-              onSubmit={handleSaveScreenTime}
-              className="mt-4 flex flex-wrap items-end gap-2.5 border-t border-[var(--line)] pt-4"
-            >
-              <label className="block min-w-[120px] flex-1 text-[11px] font-semibold text-[var(--muted)]">
-                Social media (min)
-                <input
-                  type="number"
-                  min={0}
-                  max={1440}
-                  placeholder="25"
-                  value={socialMinInput}
-                  onChange={(e) => setSocialMinInput(e.target.value)}
-                  className="mt-1 block w-full rounded-[8px] border border-[var(--line-strong)] bg-[var(--input-bg)] px-3 py-1.5 font-mono text-[12.5px] text-[var(--ink)] focus:border-[var(--health)] focus:outline-none"
-                />
-              </label>
-              <label className="block min-w-[120px] flex-1 text-[11px] font-semibold text-[var(--muted)]">
-                Total screen (min, opt)
-                <input
-                  type="number"
-                  min={0}
-                  max={1440}
-                  placeholder="180"
-                  value={totalScreenInput}
-                  onChange={(e) => setTotalScreenInput(e.target.value)}
-                  className="mt-1 block w-full rounded-[8px] border border-[var(--line-strong)] bg-[var(--input-bg)] px-3 py-1.5 font-mono text-[12.5px] text-[var(--ink)] focus:border-[var(--health)] focus:outline-none"
-                />
-              </label>
-              <div className="flex items-center gap-1.5">
-                <button
-                  type="button"
-                  onClick={() => handleQuickBumpSocial(10)}
-                  className="h-9 rounded-[8px] border border-[var(--line)] bg-[var(--bg)] px-2.5 font-mono text-[11px] font-bold text-[var(--ink)] hover:bg-[var(--surface-2)]"
-                >
-                  +10m
-                </button>
-                <button
-                  type="button"
-                  onClick={() => handleQuickBumpSocial(15)}
-                  className="h-9 rounded-[8px] border border-[var(--line)] bg-[var(--bg)] px-2.5 font-mono text-[11px] font-bold text-[var(--ink)] hover:bg-[var(--surface-2)]"
-                >
-                  +15m
-                </button>
-                <button
-                  type="submit"
-                  className="h-9 rounded-[8px] bg-[var(--health)] px-3.5 text-[12px] font-bold text-[var(--health-btn-text)] transition-opacity hover:opacity-90"
-                >
-                  {screenSavedNotice ? 'Saved' : 'Save'}
-                </button>
-              </div>
-            </form>
-          </section>
-
-          {/* Today's Health Rules Checklist */}
-          <section className="rounded-[15px] border border-[var(--line)] bg-[var(--surface)] p-6 sm:p-7">
-            <div className="flex items-center justify-between gap-3">
-              <div>
-                <h2 className="text-[21px] font-bold tracking-[-0.04em] text-[var(--ink)]">
-                  Today&apos;s health rules
-                </h2>
-                <p className="mt-1 text-[12px] text-[var(--muted)]">
-                  {summary.doneToday} of {summary.totalRules} completed today
-                </p>
-              </div>
-              <div className="grid h-9 w-9 place-items-center rounded-[10px] bg-[var(--health-lite)] text-[var(--health)]">
-                <HeartPulse className="h-4 w-4" />
-              </div>
+            <div className="flex items-center gap-1.5">
+              <button
+                type="button"
+                onClick={() =>
+                  setDaily((p) => ({ ...p, socialMin: Math.max(0, p.socialMin - 5) }))
+                }
+                className={`h-8 w-8 cursor-pointer rounded-xl font-extrabold ${T.btnWhite}`}
+              >
+                −
+              </button>
+              <button
+                type="button"
+                onClick={() => setDaily((p) => ({ ...p, socialMin: p.socialMin + 5 }))}
+                className={`h-8 cursor-pointer rounded-xl px-2.5 text-xs font-extrabold ${T.btnWhite}`}
+              >
+                +5m
+              </button>
             </div>
-
-            <div className="mt-5 divide-y divide-[var(--line)] border-t border-[var(--line)]">
-              {store.rules.length === 0 ? (
-                <div className="py-10 text-center text-sm text-[var(--muted)]">
-                  Add your first health rule below (e.g. sugar control, low-fat meals, screen time).
-                </div>
-              ) : (
-                store.rules.map((rule) => {
-                  const done = todaySet.has(rule.id);
-                  return (
-                    <div key={rule.id} className="flex items-center gap-3.5 py-3.5">
-                      <button
-                        type="button"
-                        onClick={() => toggleRuleToday(rule.id)}
-                        aria-label={`Toggle ${rule.title}`}
-                        className={`grid h-6 w-6 shrink-0 place-items-center rounded-[7px] border-2 transition-colors ${
-                          done
-                            ? 'border-[var(--health)] bg-[var(--health)] text-[var(--health-btn-text)]'
-                            : 'border-[var(--line-strong)] bg-[var(--surface)] text-transparent hover:border-[var(--health)]'
-                        }`}
-                      >
-                        <Check className="h-3.5 w-3.5 stroke-[2.8]" />
-                      </button>
-
-                      <button
-                        type="button"
-                        onClick={() => toggleRuleToday(rule.id)}
-                        className="min-w-0 flex-1 text-left"
-                      >
-                        <strong
-                          className={`block truncate text-[13.5px] font-bold ${
-                            done ? 'text-[var(--faint)] line-through' : 'text-[var(--ink)]'
-                          }`}
-                        >
-                          {rule.title}
-                        </strong>
-                        <span className="mt-0.5 block truncate text-[11.5px] text-[var(--muted)]">
-                          {CATEGORY_LABELS[rule.category]}
-                          {rule.targetNote ? ` · ${rule.targetNote}` : ''}
-                        </span>
-                      </button>
-
-                      <button
-                        type="button"
-                        onClick={() => handleDeleteRule(rule.id)}
-                        aria-label={`Remove ${rule.title}`}
-                        className="grid h-8 w-8 shrink-0 place-items-center rounded-[8px] border border-[var(--line)] text-[var(--muted)] hover:bg-red-500/10 hover:text-red-600 dark:hover:text-red-400"
-                      >
-                        <Trash2 className="h-3.5 w-3.5" />
-                      </button>
-                    </div>
-                  );
-                })
-              )}
-            </div>
-
-            {/* Add Custom Rule Form */}
-            <form
-              onSubmit={handleAddRule}
-              className="mt-5 space-y-3 border-t border-[var(--line)] pt-5"
-            >
-              <div className="text-[10.5px] font-bold uppercase tracking-[0.12em] text-[var(--faint)]">
-                ADD A HEALTH RULE
-              </div>
-              <div className="grid gap-2.5 sm:grid-cols-[1.4fr_0.9fr]">
-                <input
-                  type="text"
-                  required
-                  placeholder="e.g. No added sugar, Social media < 30m..."
-                  value={title}
-                  onChange={(e) => setTitle(e.target.value)}
-                  className="rounded-[9px] border border-[var(--line-strong)] bg-[var(--input-bg)] px-3 py-2 text-[13px] text-[var(--ink)] placeholder:text-[var(--faint)] focus:border-[var(--health)] focus:outline-none"
-                />
-                <select
-                  value={category}
-                  onChange={(e) => setCategory(e.target.value as HealthRuleCategory)}
-                  className="rounded-[9px] border border-[var(--line-strong)] bg-[var(--input-bg)] px-3 py-2 text-[13px] text-[var(--ink)] focus:border-[var(--health)] focus:outline-none"
-                >
-                  {Object.entries(CATEGORY_LABELS).map(([k, label]) => (
-                    <option key={k} value={k}>
-                      {label}
-                    </option>
-                  ))}
-                </select>
-              </div>
-              <div className="flex gap-2">
-                <input
-                  type="text"
-                  placeholder="Optional note (e.g. under 20g sugar, no Reels)..."
-                  value={targetNote}
-                  onChange={(e) => setTargetNote(e.target.value)}
-                  className="min-w-0 flex-1 rounded-[9px] border border-[var(--line-strong)] bg-[var(--input-bg)] px-3 py-2 text-[12.5px] text-[var(--ink)] placeholder:text-[var(--faint)] focus:border-[var(--health)] focus:outline-none"
-                />
-                <button
-                  type="submit"
-                  className="inline-flex h-10 shrink-0 items-center gap-1.5 rounded-[9px] bg-[var(--health)] px-4 text-[12.5px] font-bold text-[var(--health-btn-text)] transition-opacity hover:opacity-90"
-                >
-                  <Plus className="h-4 w-4 stroke-[2.4]" />
-                  <span>Add</span>
-                </button>
-              </div>
-            </form>
-          </section>
+          </div>
         </div>
 
-        {/* Right: Clean-Day Streak + Quick Templates */}
-        <aside className="space-y-5">
-          <section
-            className="rounded-[15px] border border-[var(--line)] p-6"
-            style={{ background: 'color-mix(in srgb, var(--health) 4%, var(--surface))' }}
-          >
-            <span className="text-[10px] font-bold uppercase tracking-[0.13em] text-[var(--faint)]">
-              CLEAN DISCIPLINE STREAK
-            </span>
-            <div className="mt-3 flex items-baseline gap-2.5">
-              <strong className="font-mono text-[48px] font-bold leading-none tracking-[-0.07em] text-[var(--ink)] tabular-nums">
-                {summary.currentStreak}
-              </strong>
-              <span className="text-[13px] font-semibold text-[var(--muted)]">
-                full clean day{summary.currentStreak === 1 ? '' : 's'}
+        {/* Snack Counter */}
+        <div className={`space-y-4 rounded-3xl border p-6 lg:col-span-5 ${T.card}`}>
+          <div className="flex items-center justify-between">
+            <div>
+              <span className={`text-[10px] font-extrabold uppercase tracking-widest ${getDom('karate', isDark).text}`}>
+                SNACK COUNTER
               </span>
+              <h2 className={`font-display text-lg font-extrabold ${T.text}`}>Log snacks</h2>
             </div>
+            <span
+              className={`rounded-xl px-3 py-1 text-xs font-extrabold tabular-nums ${getDom('karate', isDark).soft} ${getDom('karate', isDark).text}`}
+            >
+              {daily.snacks.length} today
+            </span>
+          </div>
 
-            {summary.loggedScreenDaysThisWeek > 0 && (
-              <p className="mt-2 text-[12px] text-[var(--muted)]">
-                Screen time under cap: {summary.daysUnderSocialLimit}/
-                {summary.loggedScreenDaysThisWeek} day(s) this week
-              </p>
-            )}
-
-            <div className="mt-5 grid grid-cols-7 gap-1.5 border-t border-[var(--line)] pt-4">
-              {summary.weekStatus.map((d, i) => (
-                <div key={d.date} className="flex flex-col items-center gap-1.5">
-                  <span
-                    className={`text-[10px] font-semibold ${
-                      d.date === today ? 'font-bold text-[var(--ink)]' : 'text-[var(--muted)]'
-                    }`}
-                  >
-                    {DAY_LETTERS[i]}
-                  </span>
-                  <span
-                    className={`h-2.5 w-2.5 rounded-full border ${
-                      d.completed
-                        ? 'border-[var(--health)] bg-[var(--health)]'
-                        : 'border-[var(--line-strong)] bg-[var(--surface-3)]'
-                    }`}
-                  />
-                  <span className="font-mono text-[9.5px] text-[var(--faint)]">
-                    {Number(d.date.slice(8))}
-                  </span>
-                </div>
-              ))}
-            </div>
-          </section>
-
-          <section className="rounded-[15px] border border-[var(--line)] bg-[var(--surface)] p-6">
-            <h2 className="text-[17px] font-bold tracking-[-0.035em] text-[var(--ink)]">
-              Quick-add protocols
-            </h2>
-            
-            <div className="mt-3.5 flex flex-wrap gap-1.5">
-              {HEALTH_PRESET_TEMPLATES.map((tpl) => {
-                const exists = store.rules.some(
-                  (r) => r.title.toLowerCase() === tpl.title.toLowerCase()
-                );
+          <form onSubmit={handleAddSnack} className="space-y-3">
+            <div className="grid grid-cols-3 gap-1.5">
+              {SNACK_CATS.map((sc) => {
+                const sd = getDom(sc.domId, isDark);
+                const sel = snackCat === sc.id;
                 return (
                   <button
-                    key={tpl.title}
+                    key={sc.id}
                     type="button"
-                    disabled={exists}
-                    onClick={() => handleQuickAddTemplate(tpl)}
-                    className="rounded-lg border border-[var(--line)] bg-[var(--bg)] px-2.5 py-1.5 text-[11.5px] font-semibold text-[var(--ink)] transition-colors hover:border-[var(--health)] disabled:opacity-40"
+                    onClick={() => setSnackCat(sc.id)}
+                    className={`cursor-pointer rounded-xl border px-2 py-2 text-center text-[11px] font-extrabold transition-all active:scale-[0.98] ${
+                      sel ? `${sd.soft} ${sd.border} ${sd.text}` : `${T.cardSubtle} ${T.muted}`
+                    }`}
                   >
-                    + {tpl.title}
+                    {sc.label}
                   </button>
                 );
               })}
             </div>
-          </section>
-        </aside>
+            <div className="flex gap-2">
+              <input
+                type="text"
+                value={snackName}
+                onChange={(e) => setSnackName(e.target.value)}
+                placeholder="e.g., Yoghurt drink, Egg hopper..."
+                className={`flex-1 rounded-xl border px-3.5 py-2.5 text-xs font-bold focus:outline-none ${T.input}`}
+              />
+              <button
+                type="submit"
+                className={`cursor-pointer rounded-xl px-4 py-2.5 font-display text-xs font-bold ${T.btnPrimary}`}
+              >
+                + Add
+              </button>
+            </div>
+          </form>
+
+          <div className="max-h-48 space-y-2 overflow-y-auto pr-0.5">
+            {daily.snacks.length === 0 ? (
+              <div className={`rounded-2xl border border-dashed p-4 text-center text-xs font-bold ${T.cardSubtle} ${T.muted}`}>
+                No snacks logged today
+              </div>
+            ) : (
+              daily.snacks.map((sn) => {
+                const sc = SNACK_CATS.find((c) => c.id === sn.category) ?? SNACK_CATS[0];
+                const sd = getDom(sc.domId, isDark);
+                return (
+                  <div
+                    key={sn.id}
+                    className={`flex items-center justify-between gap-2 rounded-xl border p-2.5 ${T.cardSubtle}`}
+                  >
+                    <div className="flex min-w-0 items-center gap-2">
+                      <span className={`shrink-0 rounded-lg px-2 py-0.5 text-[10px] font-extrabold ${sd.soft} ${sd.text}`}>
+                        {sc.label}
+                      </span>
+                      <span className={`truncate font-display text-xs font-bold ${T.text}`}>
+                        {sn.name}
+                      </span>
+                    </div>
+                    <button
+                      type="button"
+                      aria-label="Remove snack"
+                      onClick={() =>
+                        setDaily((prev) => ({
+                          ...prev,
+                          snacks: prev.snacks.filter((x) => x.id !== sn.id),
+                        }))
+                      }
+                      className={`h-6 w-6 cursor-pointer rounded-lg text-xs font-extrabold ${T.btnWhite} ${T.muted}`}
+                    >
+                      ×
+                    </button>
+                  </div>
+                );
+              })
+            )}
+          </div>
+        </div>
+      </div>
+
+      {/* Body Soreness Map & 5-Min Mobility Reset */}
+      <div className={`rounded-3xl border p-6 ${T.card}`}>
+        <div className="grid grid-cols-1 items-center gap-6 lg:grid-cols-12">
+          <div className="flex flex-col items-center lg:col-span-4">
+            <svg viewBox="0 0 120 220" className="h-56 w-36 overflow-visible" aria-label="Body soreness map">
+              <circle
+                cx="60"
+                cy="22"
+                r="14"
+                fill={isDark ? '#1A1A1A' : '#EEF2F6'}
+                stroke={isDark ? '#333333' : '#CBD5E1'}
+                strokeWidth="2"
+              />
+              <rect
+                x="38"
+                y="42"
+                width="44"
+                height="62"
+                rx="16"
+                fill={isDark ? '#1A1A1A' : '#EEF2F6'}
+                stroke={isDark ? '#333333' : '#CBD5E1'}
+                strokeWidth="2"
+              />
+              <rect
+                x="40"
+                y="106"
+                width="17"
+                height="96"
+                rx="8"
+                fill={isDark ? '#1A1A1A' : '#EEF2F6'}
+                stroke={isDark ? '#333333' : '#CBD5E1'}
+                strokeWidth="2"
+              />
+              <rect
+                x="63"
+                y="106"
+                width="17"
+                height="96"
+                rx="8"
+                fill={isDark ? '#1A1A1A' : '#EEF2F6'}
+                stroke={isDark ? '#333333' : '#CBD5E1'}
+                strokeWidth="2"
+              />
+
+              {BODY_ZONES.map((z) => {
+                const sore = daily.soreZones.includes(z.id);
+                return (
+                  <g key={z.id} onClick={() => toggleSoreZone(z.id)} className="cursor-pointer">
+                    {sore && <circle cx={z.cx} cy={z.cy} r={z.r + 5} fill="#EA580C" fillOpacity="0.22" />}
+                    <circle
+                      cx={z.cx}
+                      cy={z.cy}
+                      r={z.r - 3}
+                      fill={sore ? '#EA580C' : isDark ? '#262626' : '#FFFFFF'}
+                      stroke={sore ? '#FB923C' : isDark ? '#404040' : '#94A3B8'}
+                      strokeWidth="2.2"
+                    />
+                  </g>
+                );
+              })}
+            </svg>
+          </div>
+
+          <div className="space-y-5 lg:col-span-8">
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <div>
+                <span className={`text-[10px] font-extrabold uppercase tracking-widest ${getDom('recovery', isDark).text}`}>
+                  RECOVERY RADAR
+                </span>
+                <h2 className={`font-display text-xl font-extrabold ${T.text}`}>
+                  Body Soreness & Mobility Reset
+                </h2>
+              </div>
+              <span
+                className={`rounded-xl px-3 py-1 text-xs font-extrabold tabular-nums ${
+                  daily.soreZones.length > 0
+                    ? `${getDom('karate', isDark).soft} ${getDom('karate', isDark).text}`
+                    : `${dom.soft} ${dom.text}`
+                }`}
+              >
+                {daily.soreZones.length > 0 ? `${daily.soreZones.length} tight zones` : 'All clear'}
+              </span>
+            </div>
+
+            <div className="flex flex-wrap gap-2">
+              {BODY_ZONES.map((z) => {
+                const sore = daily.soreZones.includes(z.id);
+                const kd = getDom('karate', isDark);
+                return (
+                  <button
+                    key={z.id}
+                    type="button"
+                    onClick={() => toggleSoreZone(z.id)}
+                    className={`cursor-pointer rounded-xl border px-3.5 py-2 text-xs font-extrabold transition-all active:scale-[0.98] ${
+                      sore ? `${kd.soft} ${kd.border} ${kd.text}` : `${T.cardSubtle} ${T.muted}`
+                    }`}
+                  >
+                    {sore ? '● ' : ''}
+                    {z.label}
+                  </button>
+                );
+              })}
+            </div>
+
+            <div className={`flex flex-col items-center justify-between gap-4 rounded-2xl border p-4 sm:flex-row ${T.cardSubtle}`}>
+              <div className="flex items-center gap-3.5">
+                <span
+                  className={`flex h-12 w-12 items-center justify-center rounded-2xl border ${getDom('recovery', isDark).soft} ${getDom('recovery', isDark).border} ${getDom('recovery', isDark).text}`}
+                >
+                  <DuoIcon name="recovery" className="h-7 w-7" />
+                </span>
+                <div>
+                  <span className={`block text-[10px] font-extrabold uppercase tracking-wider ${T.muted}`}>
+                    5-MIN MOBILITY RESET
+                  </span>
+                  <span className={`font-display text-2xl font-extrabold tabular-nums ${T.text}`}>
+                    {fmtClock(mobSec)}
+                  </span>
+                </div>
+              </div>
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setMobRunning(false);
+                    setMobSec(5 * 60);
+                  }}
+                  className={`cursor-pointer rounded-xl px-3.5 py-2 text-xs font-extrabold ${T.btnWhite}`}
+                >
+                  Reset
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setMobRunning((r) => !r)}
+                  className={`cursor-pointer rounded-xl px-5 py-2 font-display text-xs font-bold ${T.btnSuccess}`}
+                >
+                  {mobRunning ? 'Pause' : 'Start 5m'}
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
       </div>
     </div>
   );

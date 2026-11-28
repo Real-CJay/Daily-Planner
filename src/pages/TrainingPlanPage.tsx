@@ -1,43 +1,22 @@
-﻿import { useCallback, useEffect, useMemo, useState, type FormEvent } from 'react';
-import {
-  Check,
-  Edit3,
-  Lock,
-  Plus,
-  ShieldAlert,
-  Sparkles,
-  Trash2,
-  X,
-} from 'lucide-react';
-import { CATEGORY_COLORS, CATEGORY_SHORT_LABELS } from '@/design-system';
-import { getLocalDateString } from '@/lib/datetime';
+﻿import { useCallback, useEffect, useMemo, useState, type FormEvent, type MouseEvent } from 'react';
+import { useNavigate } from 'react-router-dom';
+import { DuoIcon } from '@/design-system/DuoIcon';
+import { getDom, getV2Theme, mapCategoryToDomain, type DomainId } from '@/design-system/v2Theme';
+import { useFeedback } from '@/components/feedback/FeedbackContext';
+import { WeeklyRhythmCard, type DomainRhythmStat } from '@/components/v2/WeeklyRhythmCard';
+import { V2BlockModal } from '@/components/v2/V2BlockModal';
 import { useAuth } from '@/modules/auth/AuthContext';
-import { listRunningSessions } from '@/modules/running/repository';
-import { formatDistanceKm } from '@/modules/running/calculations';
+import { useTheme } from '@/modules/theme/ThemeContext';
+import { getLocalDateString, getMondayWeekStart } from '@/lib/datetime';
 import {
   createScheduleBlock,
-  listReadinessCheckIns,
+  deleteScheduleBlock,
   listScheduleBlocks,
+  listScheduleCompletions,
   updateScheduleBlock,
 } from '@/modules/calendar/repository';
-import {
-  ISO_WEEKDAYS,
-  addDaysIso,
-  buildDateRange,
-  expandCalendarOccurrences,
-  getIsoWeekday,
-} from '@/modules/calendar/scheduleEngine';
-import { ScheduleBlockModal } from '@/modules/calendar/ScheduleBlockModal';
-import {
-  computeTrainingPaceZones,
-  generateRollingSevenDayPlan,
-} from '@/modules/plan/planEngine';
-import {
-  deletePlannedWorkout,
-  listPlannedWorkouts,
-  upsertPlannedWorkouts,
-} from '@/modules/plan/repository';
-import { PlannedWorkoutModal } from '@/modules/plan/PlannedWorkoutModal';
+import { addDaysIso, getIsoWeekday } from '@/modules/calendar/scheduleEngine';
+import { listRunningSessions } from '@/modules/running/repository';
 import {
   createMonkModeSession,
   evaluateMonkModeReport,
@@ -45,1159 +24,829 @@ import {
   isCommitmentLocked,
   loadDisciplineStore,
   saveDisciplineStore,
-  type CommitmentTier,
-  type MonkModeReport,
+  type PlannerCommitment,
   type PlannerDisciplineStore,
 } from '@/modules/monk/monkEngine';
-import {
-  ACTIVITY_CATEGORY_LABELS,
-  type ActivityCategory,
-  type PlannedWorkout,
-  type PlannedWorkoutDraft,
-  type ReadinessCheckIn,
-  type RunningSession,
-  type ScheduleBlock,
+import type {
+  ActivityCategory,
+  RunningSession,
+  ScheduleBlock,
+  ScheduleBlockDraft,
+  ScheduleCompletion,
 } from '@/types/domain';
 
-const MONK_PRESET_DAYS = [7, 14, 21, 30, 60, 90];
+const DAY_NAMES = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
 
-function formatShortDate(iso: string): string {
+function fmtDate(iso: string) {
   const [y, m, d] = iso.split('-').map(Number);
   const dt = new Date(Date.UTC(y, (m || 1) - 1, d || 1));
-  return dt.toLocaleDateString('en-US', { month: 'short', day: 'numeric', timeZone: 'UTC' });
+  const days = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+  const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+  return {
+    dow: days[dt.getUTCDay()],
+    dayNum: d,
+    short: `${months[dt.getUTCMonth()]} ${d}`,
+  };
+}
+
+function occursOnDate(block: ScheduleBlock, dateIso: string): boolean {
+  if (!block.is_recurring && !block.start_time) return false;
+  if (block.is_recurring && block.recurrence_days.length > 0) {
+    return block.recurrence_days.includes(getIsoWeekday(dateIso));
+  }
+  return block.block_date === dateIso;
 }
 
 export function TrainingPlanPage() {
+  const navigate = useNavigate();
   const { user, profile } = useAuth();
+  const { resolvedTheme } = useTheme();
+  const { openMonkFocus, triggerConfetti, pushToast } = useFeedback();
+
+  const isDark = resolvedTheme === 'dark';
+  const T = useMemo(() => getV2Theme(isDark), [isDark]);
+
   const tz = profile?.timezone ?? 'Asia/Colombo';
-  const today = getLocalDateString(new Date(), tz);
-  const windowEnd = addDaysIso(today, 6);
-  const rollingDates = useMemo(() => buildDateRange(today, windowEnd), [today, windowEnd]);
+  const today = useMemo(() => getLocalDateString(new Date(), tz), [tz]);
+  const weekStart = useMemo(() => getMondayWeekStart(today), [today]);
+  const weekDates = useMemo(
+    () => Array.from({ length: 7 }, (_, i) => addDaysIso(weekStart, i)),
+    [weekStart]
+  );
+  const weekEnd = weekDates[6];
 
-  const [sessions, setSessions] = useState<RunningSession[]>([]);
+  const [store, setStore] = useState<PlannerDisciplineStore>(() =>
+    loadDisciplineStore(user?.id ?? 'guest')
+  );
   const [blocks, setBlocks] = useState<ScheduleBlock[]>([]);
-  const [checkIns, setCheckIns] = useState<ReadinessCheckIn[]>([]);
-  const [plannedWorkouts, setPlannedWorkouts] = useState<PlannedWorkout[]>([]);
+  const [completions, setCompletions] = useState<ScheduleCompletion[]>([]);
+  const [runs, setRuns] = useState<RunningSession[]>([]);
 
-  // Non-Negotiables + Negotiables + Monk Mode store
-  const [discipline, setDiscipline] = useState<PlannerDisciplineStore>({
-    commitments: [],
-    completionsByDate: {},
-    activeMonk: null,
-    pastMonkSessions: [],
-  });
-  const [newCommitTitle, setNewCommitTitle] = useState('');
-  const [newCommitCategory, setNewCommitCategory] = useState<ActivityCategory>('VOCAL');
-  const [newCommitTier, setNewCommitTier] = useState<CommitmentTier>('NON_NEGOTIABLE');
-  const [newCommitMin, setNewCommitMin] = useState('30');
-  const [newCommitPerWeek, setNewCommitPerWeek] = useState(3);
-  const [newCommitIntendedDays, setNewCommitIntendedDays] = useState<number[]>([1, 3, 5]);
+  // Inline add commitment form
+  const [name, setName] = useState('');
+  const [kind, setKind] = useState<'nq' | 'nn'>('nq');
+  const [cat, setCat] = useState<ActivityCategory>('VOCAL');
+  const [dur, setDur] = useState('30');
+  const [quota, setQuota] = useState('3');
 
-  // Monk Mode Modals
-  const [showStartMonkModal, setShowStartMonkModal] = useState(false);
-  const [monkTitle, setMonkTitle] = useState('30-Day Monk Mode');
-  const [monkDays, setMonkDays] = useState(30);
-  const [selectedMonkNegIds, setSelectedMonkNegIds] = useState<string[]>([]);
-  const [showEndMonkModal, setShowEndMonkModal] = useState(false);
-  const [earlyExitReason, setEarlyExitReason] = useState('');
-  const [viewingReport, setViewingReport] = useState<MonkModeReport | null>(null);
+  // Modals
+  const [blockModal, setBlockModal] = useState<{
+    open: boolean;
+    block: ScheduleBlock | null;
+    defaultCat: ActivityCategory;
+  }>({ open: false, block: null, defaultCat: 'RUNNING' });
+  const [savingBlock, setSavingBlock] = useState(false);
+  const [draftingRuns, setDraftingRuns] = useState(false);
 
-  // Activity & Run Modals
-  const [showRunModal, setShowRunModal] = useState(false);
-  const [editingWorkout, setEditingWorkout] = useState<PlannedWorkout | null>(null);
-  const [showBlockModal, setShowBlockModal] = useState(false);
-  const [editingBlock, setEditingBlock] = useState<ScheduleBlock | null>(null);
-  const [modalDefaultDate, setModalDefaultDate] = useState(today);
-
-  const [loading, setLoading] = useState(true);
-  const [generating, setGenerating] = useState(false);
-  const [notice, setNotice] = useState<string | null>(null);
-  const [error, setError] = useState<string | null>(null);
-
-  const loadData = useCallback(async () => {
-    if (!user) return;
-    setLoading(true);
-    setError(null);
-    try {
-      const [runRows, blockRows, checkInRows, planRows] = await Promise.all([
-        listRunningSessions(user.id),
-        listScheduleBlocks(user.id).catch(() => [] as ScheduleBlock[]),
-        listReadinessCheckIns(user.id, 14).catch(() => [] as ReadinessCheckIn[]),
-        listPlannedWorkouts(user.id, today, windowEnd),
-      ]);
-      setSessions(runRows);
-      setBlocks(blockRows);
-      setCheckIns(checkInRows);
-      setPlannedWorkouts(planRows);
-      setDiscipline(loadDisciplineStore(user.id));
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to load weekly planner.');
-    } finally {
-      setLoading(false);
-    }
-  }, [user, today, windowEnd]);
+  const [sprintModalOpen, setSprintModalOpen] = useState(false);
+  const [sprintDays, setSprintDays] = useState(14);
+  const [sprintTitle, setSprintTitle] = useState('Monk Sprint');
 
   useEffect(() => {
-    void loadData();
-  }, [loadData]);
+    if (user) {
+      setStore(loadDisciplineStore(user.id));
+    }
+  }, [user]);
 
-  function updateDiscipline(next: PlannerDisciplineStore) {
-    if (!user) return;
-    setDiscipline(next);
-    saveDisciplineStore(user.id, next);
-  }
-
-  const activePhase = profile?.current_phase ?? 'REBUILDING';
-  const preferredDays = profile?.preferred_run_days?.length
-    ? profile.preferred_run_days
-    : [1, 3, 5, 6];
-  const paceZones = useMemo(() => computeTrainingPaceZones(sessions), [sessions]);
-
-  const weekOccurrences = useMemo(
-    () => expandCalendarOccurrences(blocks, [], today, windowEnd),
-    [blocks, today, windowEnd]
+  const updateStore = useCallback(
+    (updater: (prev: PlannerDisciplineStore) => PlannerDisciplineStore) => {
+      setStore((prev) => {
+        const next = updater(prev);
+        if (user) saveDisciplineStore(user.id, next);
+        return next;
+      });
+    },
+    [user]
   );
+
+  const loadSchedule = useCallback(async () => {
+    if (!user) return;
+    const [blks, comps, runList] = await Promise.all([
+      listScheduleBlocks(user.id),
+      listScheduleCompletions(user.id, weekStart, weekEnd),
+      listRunningSessions(user.id),
+    ]);
+    setBlocks(blks);
+    setCompletions(comps);
+    setRuns(runList);
+  }, [user, weekStart, weekEnd]);
+
+  useEffect(() => {
+    void loadSchedule();
+  }, [loadSchedule]);
 
   const nonNegotiables = useMemo(
-    () => discipline.commitments.filter((c) => c.tier === 'NON_NEGOTIABLE'),
-    [discipline.commitments]
+    () => store.commitments.filter((c) => c.tier === 'NON_NEGOTIABLE'),
+    [store.commitments]
   );
+
   const negotiables = useMemo(
-    () => discipline.commitments.filter((c) => c.tier === 'NEGOTIABLE'),
-    [discipline.commitments]
+    () => store.commitments.filter((c) => c.tier === 'NEGOTIABLE'),
+    [store.commitments]
   );
 
-  const activeMonkReport = useMemo(() => {
-    if (!discipline.activeMonk) return null;
-    return evaluateMonkModeReport(discipline.activeMonk, discipline.completionsByDate, today);
-  }, [discipline.activeMonk, discipline.completionsByDate, today]);
+  const todayDoneIds = store.completionsByDate[today] ?? [];
 
-  const todayDoneCommitIds = useMemo(
-    () => new Set(discipline.completionsByDate[today] ?? []),
-    [discipline.completionsByDate, today]
-  );
+  const monkReport = useMemo(() => {
+    if (!store.activeMonk) return null;
+    return evaluateMonkModeReport(store.activeMonk, store.completionsByDate, today);
+  }, [store.activeMonk, store.completionsByDate, today]);
 
-  function toggleIntendedDay(isoDay: number) {
-    setNewCommitIntendedDays((prev) =>
-      prev.includes(isoDay) ? prev.filter((d) => d !== isoDay) : [...prev, isoDay].sort()
-    );
-  }
+  const completionMap = useMemo(() => {
+    const m = new Map<string, ScheduleCompletion>();
+    for (const c of completions) {
+      m.set(`${c.block_id}__${c.occurrence_date}`, c);
+    }
+    return m;
+  }, [completions]);
 
-  function toggleCommitmentToday(id: string) {
-    const set = new Set(discipline.completionsByDate[today] ?? []);
-    if (set.has(id)) set.delete(id);
-    else set.add(id);
-    updateDiscipline({
-      ...discipline,
-      completionsByDate: { ...discipline.completionsByDate, [today]: Array.from(set) },
+  const rhythmStats: DomainRhythmStat[] = useMemo(() => {
+    const domains: DomainId[] = ['running', 'strength', 'karate', 'music'];
+    return domains.map((dom) => {
+      let total = 0;
+      let done = 0;
+      for (const iso of weekDates) {
+        for (const blk of blocks) {
+          if (mapCategoryToDomain(blk.category) === dom && occursOnDate(blk, iso)) {
+            total++;
+            if (completionMap.get(`${blk.id}__${iso}`)?.status === 'COMPLETED') {
+              done++;
+            }
+          }
+        }
+      }
+      if (dom === 'running') {
+        const weekRuns = runs.filter((r) => r.session_date >= weekStart && r.session_date <= weekEnd).length;
+        done = Math.max(done, weekRuns);
+        total = Math.max(total, weekRuns, 3);
+      }
+      return { id: dom, done, total };
+    });
+  }, [blocks, weekDates, completionMap, runs, weekStart, weekEnd]);
+
+  function handleToggleNonNegotiable(id: string, e: MouseEvent) {
+    const already = todayDoneIds.includes(id);
+    if (!already) triggerConfetti(e.clientX, e.clientY);
+    updateStore((prev) => {
+      const list = prev.completionsByDate[today] ?? [];
+      const nextList = already ? list.filter((x) => x !== id) : [...list, id];
+      return {
+        ...prev,
+        completionsByDate: { ...prev.completionsByDate, [today]: nextList },
+      };
     });
   }
 
-  function handleAddCommitment(e: FormEvent) {
-    e.preventDefault();
-    if (!newCommitTitle.trim()) return;
-    if (discipline.activeMonk && newCommitTier === 'NON_NEGOTIABLE') {
-      setError('Non-Negotiables are locked while Monk Mode is active.');
+  function handleIncrementQuota(item: PlannerCommitment, e: MouseEvent) {
+    triggerConfetti(e.clientX, e.clientY);
+    updateStore((prev) => {
+      // Find first day this week not yet logged for this commitment (prefer today)
+      const candidates = [today, ...weekDates.filter((d) => d !== today && d <= weekEnd)];
+      const targetDay =
+        candidates.find((d) => !(prev.completionsByDate[d] ?? []).includes(item.id)) ?? today;
+      const list = prev.completionsByDate[targetDay] ?? [];
+      if (list.includes(item.id)) return prev;
+      return {
+        ...prev,
+        completionsByDate: {
+          ...prev.completionsByDate,
+          [targetDay]: [...list, item.id],
+        },
+      };
+    });
+    pushToast(`${item.title} +1 logged`, '#10B981');
+  }
+
+  function handleDeleteCommitment(item: PlannerCommitment) {
+    if (isCommitmentLocked(item, store.activeMonk)) {
+      pushToast('Locked during active Monk Sprint', '#EA580C');
       return;
     }
-    const item = {
+    updateStore((prev) => ({
+      ...prev,
+      commitments: prev.commitments.filter((c) => c.id !== item.id),
+    }));
+  }
+
+  function handleAddRule(e: FormEvent) {
+    e.preventDefault();
+    const trimmed = name.trim();
+    if (!trimmed) return;
+
+    const newItem: PlannerCommitment = {
       id: `cm-${Date.now()}`,
-      title: newCommitTitle.trim(),
-      category: newCommitCategory,
-      tier: newCommitTier,
-      targetMinutes: newCommitMin.trim() ? Number(newCommitMin) : null,
-      targetPerWeek: newCommitTier === 'NEGOTIABLE' ? Math.max(1, Math.min(7, newCommitPerWeek)) : null,
-      intendedDays: newCommitTier === 'NEGOTIABLE' ? newCommitIntendedDays : [],
-      createdAt: today,
+      title: trimmed,
+      category: cat,
+      tier: kind === 'nn' ? 'NON_NEGOTIABLE' : 'NEGOTIABLE',
+      targetMinutes: Number(dur) || 30,
+      targetPerWeek: kind === 'nq' ? Math.max(1, Math.min(7, Number(quota) || 3)) : null,
+      intendedDays: kind === 'nq' ? [1, 3, 5] : [1, 2, 3, 4, 5, 6, 7],
+      createdAt: new Date().toISOString(),
     };
-    updateDiscipline({ ...discipline, commitments: [...discipline.commitments, item] });
-    setNewCommitTitle('');
-    setError(null);
+
+    updateStore((prev) => ({
+      ...prev,
+      commitments: [...prev.commitments, newItem],
+    }));
+    setName('');
+    pushToast('Commitment added', '#10B981');
   }
 
-  function handleRemoveCommitment(id: string) {
-    const target = discipline.commitments.find((c) => c.id === id);
-    if (!target) return;
-    if (isCommitmentLocked(target, discipline.activeMonk)) {
-      setError('Cannot remove a locked commitment while Monk Mode is active.');
-      return;
-    }
-    updateDiscipline({
-      ...discipline,
-      commitments: discipline.commitments.filter((c) => c.id !== id),
-    });
-  }
-
-  function openStartMonk() {
-    setSelectedMonkNegIds(negotiables.map((n) => n.id));
-    setShowStartMonkModal(true);
-  }
-
-  function handleStartMonkMode(e: FormEvent) {
-    e.preventDefault();
-    const chosenNegotiables = negotiables.filter((n) => selectedMonkNegIds.includes(n.id));
-    if (nonNegotiables.length === 0 && chosenNegotiables.length === 0) {
-      setError('Select at least one Non-Negotiable or Negotiable before starting Monk Mode.');
+  function handleStartMonkSprint() {
+    if (nonNegotiables.length === 0) {
+      pushToast('Add at least 1 Non-Negotiable first', '#EA580C');
       return;
     }
     const session = createMonkModeSession({
-      title: monkTitle,
+      title: sprintTitle.trim() || `${sprintDays}-Day Monk Sprint`,
       startDate: today,
-      plannedDays: monkDays,
+      plannedDays: sprintDays,
       nonNegotiables,
-      negotiables: chosenNegotiables,
+      negotiables,
     });
-    updateDiscipline({ ...discipline, activeMonk: session });
-    setShowStartMonkModal(false);
-    setNotice(
-      `Monk Mode locked for ${session.plannedDays} days (${nonNegotiables.length} daily + ${chosenNegotiables.length} flexible weekly).`
-    );
+    updateStore((prev) => ({
+      ...prev,
+      activeMonk: session,
+    }));
+    setSprintModalOpen(false);
+    triggerConfetti();
+    pushToast(`${sprintDays}-day Monk Sprint locked!`, '#4F46E5');
   }
 
-  function handleCompleteOrEndMonkEarly(e: FormEvent) {
-    e.preventDefault();
-    if (!discipline.activeMonk) return;
-    if (!earlyExitReason.trim()) {
-      setError('You must state a reason to end Monk Mode early.');
+  function handleEndMonkEarly() {
+    if (!store.activeMonk) return;
+    if (!window.confirm('End Monk Sprint early? This applies an early-exit penalty to your score.')) {
       return;
     }
-    const ended = {
-      ...discipline.activeMonk,
-      status: 'ENDED_EARLY' as const,
-      endedAtDate: today,
-      earlyExitReason: earlyExitReason.trim(),
-    };
-    const report = evaluateMonkModeReport(ended, discipline.completionsByDate, today);
-    updateDiscipline({
-      ...discipline,
-      activeMonk: null,
-      pastMonkSessions: [ended, ...discipline.pastMonkSessions],
+    updateStore((prev) => {
+      if (!prev.activeMonk) return prev;
+      const ended = {
+        ...prev.activeMonk,
+        status: 'ENDED_EARLY' as const,
+        endedAtDate: today,
+        earlyExitReason: 'Ended manually',
+      };
+      return {
+        ...prev,
+        activeMonk: null,
+        pastMonkSessions: [ended, ...prev.pastMonkSessions],
+      };
     });
-    setEarlyExitReason('');
-    setShowEndMonkModal(false);
-    setViewingReport(report);
+    pushToast('Monk Sprint ended early', '#E11D48');
   }
 
-  function handleFinishCompletedMonk() {
-    if (!discipline.activeMonk) return;
-    const finished = {
-      ...discipline.activeMonk,
-      status: 'COMPLETED' as const,
-      endedAtDate: discipline.activeMonk.endDate,
-    };
-    const report = evaluateMonkModeReport(finished, discipline.completionsByDate, today);
-    updateDiscipline({
-      ...discipline,
-      activeMonk: null,
-      pastMonkSessions: [finished, ...discipline.pastMonkSessions],
-    });
-    setViewingReport(report);
-  }
-
-  async function handleGenerateRunDraft() {
-    if (!user) return;
-    setGenerating(true);
-    setError(null);
-    setNotice(null);
+  async function handleDraftRuns() {
+    if (!user || draftingRuns) return;
+    setDraftingRuns(true);
     try {
-      const drafts = generateRollingSevenDayPlan({
-        referenceDate: today,
-        profile: { current_phase: activePhase, preferred_run_days: preferredDays },
-        sessions,
-        blocks,
-        checkIns,
-      });
-      if (drafts.length === 0) {
-        setError('No eligible running days found in the next 7 days.');
-        return;
+      const drafts = [
+        { date: addDaysIso(weekStart, 1), title: 'Easy Aerobic Run', duration: 35, note: 'Zone 2 easy' },
+        { date: addDaysIso(weekStart, 3), title: 'Tempo / Threshold Run', duration: 40, note: 'Controlled tempo' },
+        { date: addDaysIso(weekStart, 5), title: 'Steady Long Run', duration: 50, note: 'Relaxed aerobic' },
+      ];
+      let added = 0;
+      for (const d of drafts) {
+        const exists = blocks.some((b) => b.category === 'RUNNING' && occursOnDate(b, d.date));
+        if (!exists) {
+          await createScheduleBlock(user.id, {
+            title: d.title,
+            category: 'RUNNING',
+            block_date: d.date,
+            start_time: '06:15',
+            end_time: '07:00',
+            duration_min: d.duration,
+            is_recurring: false,
+            recurrence_days: [],
+            status: 'PLANNED',
+            physical_load: 'MODERATE',
+            notes: d.note,
+          });
+          added++;
+        }
       }
-      const completedDates = new Set(
-        plannedWorkouts.filter((w) => w.status === 'COMPLETED').map((w) => w.plan_date)
+      await loadSchedule();
+      pushToast(
+        added > 0 ? `Drafted ${added} weekly runs` : 'Weekly runs already scheduled',
+        '#2563EB'
       );
-      await upsertPlannedWorkouts(
-        user.id,
-        drafts.filter((d) => !completedDates.has(d.plan_date))
-      );
-      await loadData();
-      setNotice('Drafted adaptive running sessions for the next 7 days.');
     } finally {
-      setGenerating(false);
+      setDraftingRuns(false);
     }
   }
 
-  async function handleSaveManualWorkout(
-    draft: PlannedWorkoutDraft,
-    previousId?: string,
-    previousDate?: string
-  ) {
+  async function handleSaveBlock(draft: ScheduleBlockDraft, existingId: string | null) {
     if (!user) return;
-    if (previousId && previousDate && previousDate !== draft.plan_date) {
-      await deletePlannedWorkout(user.id, previousId);
+    setSavingBlock(true);
+    try {
+      if (existingId) {
+        await updateScheduleBlock(user.id, existingId, draft);
+        pushToast('Block updated', '#2563EB');
+      } else {
+        await createScheduleBlock(user.id, draft);
+        pushToast('Activity planned', '#2563EB');
+      }
+      setBlockModal({ open: false, block: null, defaultCat: 'RUNNING' });
+      await loadSchedule();
+    } finally {
+      setSavingBlock(false);
     }
-    await upsertPlannedWorkouts(user.id, [draft]);
-    await loadData();
   }
+
+  async function handleDeleteBlock(blockId: string) {
+    if (!user) return;
+    setSavingBlock(true);
+    try {
+      await deleteScheduleBlock(user.id, blockId);
+      setBlockModal({ open: false, block: null, defaultCat: 'RUNNING' });
+      pushToast('Block deleted', '#DB2777');
+      await loadSchedule();
+    } finally {
+      setSavingBlock(false);
+    }
+  }
+
+  const readDom = getDom('reading', isDark);
+  const musicDom = getDom('music', isDark);
+  const runDom = getDom('running', isDark);
+  const sleepDom = getDom('sleep', isDark);
 
   return (
-    <div className="space-y-7 pb-6">
-      {/* Studio Header */}
-      <header className="flex flex-col justify-between gap-4 sm:flex-row sm:items-end">
-        <h1 className="text-[34px] font-bold leading-[1.08] tracking-[-0.055em] text-[var(--ink)] sm:text-[42px]">
-          Plan your <em className="not-italic text-[var(--blue)]">week.</em>
+    <div className="animate-pop space-y-6">
+      {/* Header */}
+      <div className="flex flex-col justify-between gap-4 sm:flex-row sm:items-center">
+        <h1 className={`font-display text-3xl font-extrabold tracking-tight sm:text-4xl ${T.text}`}>
+          Plan your <span className={isDark ? 'text-[#60A5FA]' : 'text-[#2563EB]'}>week.</span>
         </h1>
-
-        <div className="flex flex-wrap items-center gap-2">
-          {!discipline.activeMonk ? (
+        <div className="flex flex-wrap items-center gap-2.5">
+          <button
+            type="button"
+            onClick={openMonkFocus}
+            className={`cursor-pointer rounded-xl px-4 py-2.5 font-display text-xs font-bold transition-all active:scale-[0.98] sm:text-sm ${
+              isDark
+                ? 'border border-[#818CF8]/30 bg-[#4F46E5]/15 text-[#818CF8] hover:bg-[#4F46E5]/25'
+                : 'border border-[#C7D2FE] bg-[#EEF2FF] text-[#4F46E5] hover:bg-[#E0E7FF]'
+            }`}
+          >
+            Focus Timer
+          </button>
+          {!store.activeMonk && (
             <button
               type="button"
-              onClick={openStartMonk}
-              className="inline-flex h-10 items-center gap-2 rounded-[9px] border border-[var(--line-strong)] bg-[var(--surface)] px-3.5 text-[12.5px] font-bold text-[var(--ink)] transition-colors hover:border-[var(--blue)] hover:text-[var(--blue)]"
+              onClick={() => setSprintModalOpen(true)}
+              className={`cursor-pointer rounded-xl px-4 py-2.5 font-display text-xs font-bold sm:text-sm ${T.btnWhite}`}
             >
-              <Lock className="h-3.5 w-3.5" />
-              <span>Start Monk Mode</span>
-            </button>
-          ) : (
-            <button
-              type="button"
-              onClick={() => {
-                if (activeMonkReport) setViewingReport(activeMonkReport);
-              }}
-              className="inline-flex h-10 items-center gap-2 rounded-[9px] border border-[var(--blue)]/40 bg-[var(--blue-lite)] px-3.5 text-[12.5px] font-bold text-[var(--blue-ink)]"
-            >
-              <Lock className="h-3.5 w-3.5" />
-              <span>Monk Mode · {activeMonkReport?.finalScore.toFixed(2)}×</span>
+              Lock Monk Sprint
             </button>
           )}
-
           <button
             type="button"
-            disabled={generating}
-            onClick={() => void handleGenerateRunDraft()}
-            className="inline-flex h-10 items-center gap-1.5 rounded-[9px] border border-[var(--line-strong)] bg-[var(--surface)] px-3.5 text-[12.5px] font-semibold text-[var(--ink)] hover:bg-[var(--surface-2)] disabled:opacity-50"
+            disabled={draftingRuns}
+            onClick={() => void handleDraftRuns()}
+            className={`inline-flex cursor-pointer items-center gap-1.5 rounded-xl px-4 py-2.5 font-display text-xs font-bold disabled:opacity-50 sm:text-sm ${T.btnWhite}`}
           >
-            <Sparkles className="h-3.5 w-3.5 text-[var(--blue)]" />
-            <span>{generating ? 'Drafting...' : 'Draft runs'}</span>
+            <span className={runDom.text}>
+              <DuoIcon name="running" className="h-4 w-4" />
+            </span>
+            {draftingRuns ? 'Drafting...' : 'Draft runs'}
           </button>
-
           <button
             type="button"
-            onClick={() => {
-              setEditingBlock(null);
-              setModalDefaultDate(today);
-              setShowBlockModal(true);
-            }}
-            className="inline-flex h-10 items-center gap-1.5 rounded-[9px] bg-[var(--blue)] px-4 text-[12.5px] font-bold text-[var(--blue-btn-text)] transition-opacity hover:opacity-90"
+            onClick={() => setBlockModal({ open: true, block: null, defaultCat: 'RUNNING' })}
+            className={`cursor-pointer rounded-xl px-4 py-2.5 font-display text-xs font-bold sm:text-sm ${T.btnPrimary}`}
           >
-            <Plus className="h-4 w-4 stroke-[2.4]" />
-            <span>Plan activity</span>
+            + Plan activity
           </button>
         </div>
-      </header>
+      </div>
 
-      {notice && (
-        <div className="rounded-xl border border-[var(--blue)]/30 bg-[var(--blue-lite)] px-4 py-2.5 text-xs font-semibold text-[var(--blue-ink)]">
-          {notice}
-        </div>
-      )}
-      {error && (
-        <div className="rounded-xl border border-red-400/40 bg-red-500/10 px-4 py-2.5 text-xs font-semibold text-red-700 dark:text-red-300">
-          {error}
-        </div>
-      )}
-
-      {/* Active Monk Mode Status Strip */}
-      {discipline.activeMonk && activeMonkReport && (
-        <section
-          className="rounded-[15px] border border-[var(--blue)]/35 p-5 sm:p-6"
-          style={{ background: 'color-mix(in srgb, var(--blue) 6%, var(--surface))' }}
+      {/* Active Monk Mode Sprint Banner (Compact V2 Card) */}
+      {store.activeMonk && monkReport && (
+        <div
+          className={`flex flex-wrap items-center justify-between gap-4 rounded-3xl border p-5 ${sleepDom.soft} ${sleepDom.border}`}
         >
-          <div className="flex flex-col justify-between gap-4 lg:flex-row lg:items-center">
-            <div className="space-y-1.5">
-              <div className="flex flex-wrap items-center gap-2">
-                <span className="inline-flex items-center gap-1.5 rounded-md bg-[var(--blue)] px-2 py-0.5 font-mono text-[10px] font-bold uppercase text-[var(--blue-btn-text)]">
-                  <Lock className="h-3 w-3" />
-                  MONK MODE ACTIVE
-                </span>
-                <strong className="text-[16px] font-bold text-[var(--ink)]">
-                  {discipline.activeMonk.title}
-                </strong>
-                <span className="font-mono text-[11.5px] text-[var(--muted)]">
-                  {formatShortDate(discipline.activeMonk.startDate)} →{' '}
-                  {formatShortDate(discipline.activeMonk.endDate)}
-                </span>
-              </div>
-              <p className="text-[12.5px] text-[var(--muted)]">
-                Day {activeMonkReport.elapsedDays} of {activeMonkReport.plannedDays} ·{' '}
-                <strong className="text-[var(--ink)]">
-                  {activeMonkReport.finalScore.toFixed(3)}×
-                </strong>{' '}
-                compounding score · {activeMonkReport.brokenDays} daily break(s)
-              </p>
-
-              {activeMonkReport.currentWeekQuotas.length > 0 && (
-                <div className="flex flex-wrap gap-1.5 pt-1">
-                  {activeMonkReport.currentWeekQuotas.map((q) => (
-                    <span
-                      key={q.commitmentId}
-                      className={`rounded-md border px-2 py-0.5 font-mono text-[10.5px] font-semibold ${
-                        q.passed
-                          ? 'border-[#3f7a56]/40 bg-[#3f7a56]/12 text-[#3f7a56] dark:text-[#7fc29b]'
-                          : 'border-[var(--line)] bg-[var(--surface)] text-[var(--muted)]'
-                      }`}
-                    >
-                      {q.title}: {q.completed}/{q.required} this wk
-                    </span>
-                  ))}
-                </div>
-              )}
-            </div>
-
-            <div className="flex flex-wrap items-center gap-2">
-              {today >= discipline.activeMonk.endDate ? (
-                <button
-                  type="button"
-                  onClick={handleFinishCompletedMonk}
-                  className="h-9 rounded-[8px] bg-[var(--blue)] px-4 text-[12px] font-bold text-[var(--blue-btn-text)]"
-                >
-                  Finish &amp; View Report
-                </button>
-              ) : (
-                <button
-                  type="button"
-                  onClick={() => setShowEndMonkModal(true)}
-                  className="h-9 rounded-[8px] border border-red-400/40 bg-red-500/10 px-3.5 text-[12px] font-bold text-red-700 hover:bg-red-500/20 dark:text-red-300"
-                >
-                  End early (penalty)
-                </button>
-              )}
+          <div className="flex items-center gap-3.5">
+            <span
+              className={`flex h-12 w-12 items-center justify-center rounded-2xl bg-[#4F46E5] text-white`}
+            >
+              <DuoIcon name="monk" className="h-6 w-6" />
+            </span>
+            <div>
+              <span className={`text-[10px] font-extrabold uppercase tracking-widest ${sleepDom.text}`}>
+                MONK SPRINT ACTIVE · {monkReport.elapsedDays}/{monkReport.plannedDays} DAYS
+              </span>
+              <h2 className={`font-display text-lg font-extrabold ${T.text}`}>
+                {monkReport.title}
+              </h2>
             </div>
           </div>
-        </section>
+
+          <div className="flex flex-wrap items-center gap-3">
+            <div className={`rounded-2xl border px-3.5 py-2 text-center ${T.card}`}>
+              <span className={`block text-[10px] font-extrabold uppercase ${T.muted}`}>Score</span>
+              <span className={`font-display text-base font-extrabold tabular-nums ${sleepDom.text}`}>
+                {monkReport.finalScore.toFixed(2)}×
+              </span>
+            </div>
+            <div className={`rounded-2xl border px-3.5 py-2 text-center ${T.card}`}>
+              <span className={`block text-[10px] font-extrabold uppercase ${T.muted}`}>Compliance</span>
+              <span className={`font-display text-base font-extrabold tabular-nums ${readDom.text}`}>
+                {monkReport.compliancePct}%
+              </span>
+            </div>
+            <button
+              type="button"
+              onClick={handleEndMonkEarly}
+              className={`cursor-pointer rounded-xl px-3.5 py-2 text-xs font-extrabold ${T.btnDangerSoft}`}
+            >
+              End early
+            </button>
+          </div>
+        </div>
       )}
 
-      {/* Non-Negotiables vs. Negotiables Section */}
-      <div className="grid gap-5 lg:grid-cols-2">
-        {/* Non-Negotiables (Daily) */}
-        <section className="rounded-[15px] border border-[var(--line)] bg-[var(--surface)] p-6">
-          <div className="flex items-center justify-between gap-2">
-            <div>
-              <div className="flex items-center gap-2">
-                <h2 className="text-[19px] font-bold tracking-[-0.04em] text-[var(--ink)]">
-                  Non-Negotiables
-                </h2>
-                {discipline.activeMonk && (
-                  <span className="inline-flex items-center gap-1 rounded bg-[var(--blue-lite)] px-2 py-0.5 font-mono text-[10px] font-bold text-[var(--blue-ink)]">
-                    <Lock className="h-3 w-3" />
-                    LOCKED
-                  </span>
-                )}
-              </div>
-              
-            </div>
+      {/* Non-Negotiables & Weekly Quotas */}
+      <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
+        {/* Non-Negotiables */}
+        <div className={`space-y-4 rounded-3xl border p-6 ${T.card}`}>
+          <div className="flex items-center justify-between">
+            <h2 className={`font-display text-lg font-extrabold ${T.text}`}>Non-Negotiables</h2>
+            <span
+              className={`rounded-xl border px-2.5 py-1 text-[11px] font-extrabold ${readDom.soft} ${readDom.border} ${readDom.text}`}
+            >
+              DAILY
+            </span>
           </div>
-
-          <div className="mt-4 divide-y divide-[var(--line)] border-t border-[var(--line)]">
-            {nonNegotiables.length === 0 ? (
-              <p className="py-6 text-xs text-[var(--muted)]">
-                No Non-Negotiables set yet. Add one on the right.
-              </p>
-            ) : (
-              nonNegotiables.map((item) => {
-                const done = todayDoneCommitIds.has(item.id);
-                const locked = isCommitmentLocked(item, discipline.activeMonk);
-                return (
-                  <div key={item.id} className="flex items-center gap-3 py-3">
-                    <button
-                      type="button"
-                      onClick={() => toggleCommitmentToday(item.id)}
-                      className={`grid h-5 w-5 shrink-0 place-items-center rounded-[6px] border-2 transition-colors ${
-                        done
-                          ? 'border-[var(--blue)] bg-[var(--blue)] text-[var(--blue-btn-text)]'
-                          : 'border-[var(--line-strong)] bg-[var(--surface)] text-transparent hover:border-[var(--blue)]'
-                      }`}
+          <div className="space-y-3">
+            {nonNegotiables.length === 0 && (
+              <div className={`rounded-2xl border border-dashed p-6 text-center text-xs font-bold ${T.cardSubtle} ${T.muted}`}>
+                No daily non-negotiables yet
+              </div>
+            )}
+            {nonNegotiables.map((item) => {
+              const domId = mapCategoryToDomain(item.category);
+              const d = getDom(domId, isDark);
+              const done = todayDoneIds.includes(item.id);
+              const locked = isCommitmentLocked(item, store.activeMonk);
+              return (
+                <div
+                  key={item.id}
+                  className={`flex items-center justify-between gap-3 rounded-2xl border p-4 ${
+                    done
+                      ? isDark
+                        ? 'border-[#34D399]/30 bg-[#10B981]/10'
+                        : 'border-[#A7F3D0] bg-[#ECFDF5]/60'
+                      : T.cardSubtle
+                  }`}
+                >
+                  <div className="flex min-w-0 items-center gap-3.5">
+                    <div
+                      className={`flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl border ${d.soft} ${d.border} ${d.text}`}
                     >
-                      <Check className="h-3.5 w-3.5 stroke-[2.8]" />
-                    </button>
-                    <div className="min-w-0 flex-1">
-                      <strong
-                        className={`block truncate text-[13px] font-bold ${
-                          done ? 'text-[var(--faint)] line-through' : 'text-[var(--ink)]'
-                        }`}
-                      >
+                      <DuoIcon name={domId} className="h-7 w-7" />
+                    </div>
+                    <div className="min-w-0">
+                      <div className={`truncate font-display text-sm font-extrabold sm:text-base ${T.text}`}>
                         {item.title}
-                      </strong>
-                      <span className="text-[11px] text-[var(--muted)]">
-                        {CATEGORY_SHORT_LABELS[item.category]}
-                        {item.targetMinutes ? ` · ${item.targetMinutes}m daily` : ' · Daily'}
+                      </div>
+                      <span className={`text-[11px] font-bold ${T.muted}`}>
+                        Daily{item.targetMinutes ? ` · ${item.targetMinutes}m` : ''}
+                        {locked ? ' · Locked' : ''}
                       </span>
                     </div>
-                    {locked ? (
-                      <Lock className="h-3.5 w-3.5 shrink-0 text-[var(--faint)]" />
-                    ) : (
+                  </div>
+                  <div className="flex shrink-0 items-center gap-2">
+                    <button
+                      type="button"
+                      onClick={(e) => handleToggleNonNegotiable(item.id, e)}
+                      className={`cursor-pointer rounded-xl px-3.5 py-2 font-display text-xs font-bold ${
+                        done ? T.btnSuccess : T.btnWhite
+                      }`}
+                    >
+                      {done ? '✓ Done' : 'Check'}
+                    </button>
+                    {!locked && (
                       <button
                         type="button"
-                        onClick={() => handleRemoveCommitment(item.id)}
-                        aria-label={`Remove ${item.title}`}
-                        className="rounded p-1.5 text-[var(--faint)] hover:bg-red-500/10 hover:text-red-600"
+                        aria-label="Delete"
+                        onClick={() => handleDeleteCommitment(item)}
+                        className={`h-8 w-8 cursor-pointer rounded-xl font-bold ${T.btnWhite} ${T.muted}`}
                       >
-                        <Trash2 className="h-3.5 w-3.5" />
+                        ×
                       </button>
                     )}
                   </div>
-                );
-              })
-            )}
+                </div>
+              );
+            })}
           </div>
-        </section>
+        </div>
 
-        {/* Negotiables (Flexible Weekly Quotas) + Add Form */}
-        <section className="flex flex-col justify-between rounded-[15px] border border-[var(--line)] bg-[var(--surface)] p-6">
-          <div>
-            <h2 className="text-[19px] font-bold tracking-[-0.04em] text-[var(--ink)]">
-              Negotiables (Weekly Quotas)
-            </h2>
-            
+        {/* Weekly Quotas */}
+        <div className={`space-y-4 rounded-3xl border p-6 ${T.card}`}>
+          <div className="flex items-center justify-between">
+            <h2 className={`font-display text-lg font-extrabold ${T.text}`}>Weekly Quotas</h2>
+            <span
+              className={`rounded-xl border px-2.5 py-1 text-[11px] font-extrabold ${musicDom.soft} ${musicDom.border} ${musicDom.text}`}
+            >
+              FLEXIBLE
+            </span>
+          </div>
 
-            <div className="mt-4 divide-y divide-[var(--line)] border-t border-[var(--line)]">
-              {negotiables.length === 0 ? (
-                <p className="py-5 text-xs text-[var(--muted)]">
-                  No weekly-quota negotiables added yet.
-                </p>
-              ) : (
-                negotiables.map((item) => {
-                  const done = todayDoneCommitIds.has(item.id);
-                  const locked = isCommitmentLocked(item, discipline.activeMonk);
-                  const weekDone = getWeeklyCompletionCount(
-                    item.id,
-                    discipline.completionsByDate,
-                    today
-                  );
-                  const targetWk = item.targetPerWeek ?? 3;
-                  const intendedLabels = (item.intendedDays ?? [])
-                    .map((d) => ISO_WEEKDAYS.find((w) => w.iso === d)?.short)
-                    .filter(Boolean)
-                    .join(', ');
+          <div className="space-y-3">
+            {negotiables.length === 0 && (
+              <div className={`rounded-2xl border border-dashed p-6 text-center text-xs font-bold ${T.cardSubtle} ${T.muted}`}>
+                Add flexible weekly quotas below
+              </div>
+            )}
+            {negotiables.map((item) => {
+              const domId = mapCategoryToDomain(item.category);
+              const d = getDom(domId, isDark);
+              const target = item.targetPerWeek ?? 3;
+              const doneCount = getWeeklyCompletionCount(item.id, store.completionsByDate, today);
+              const locked = isCommitmentLocked(item, store.activeMonk);
+              const dayLabels = (item.intendedDays ?? [])
+                .map((n) => DAY_NAMES[n - 1])
+                .filter(Boolean)
+                .join(', ');
 
-                  return (
-                    <div key={item.id} className="flex items-center gap-3 py-3">
-                      <button
-                        type="button"
-                        onClick={() => toggleCommitmentToday(item.id)}
-                        className={`grid h-5 w-5 shrink-0 place-items-center rounded-[6px] border-2 transition-colors ${
-                          done
-                            ? 'border-[var(--blue)] bg-[var(--blue)] text-[var(--blue-btn-text)]'
-                            : 'border-[var(--line-strong)] bg-[var(--surface)] text-transparent hover:border-[var(--blue)]'
-                        }`}
-                      >
-                        <Check className="h-3.5 w-3.5 stroke-[2.8]" />
-                      </button>
-                      <div className="min-w-0 flex-1">
-                        <div className="flex items-center gap-2">
-                          <strong
-                            className={`truncate text-[13px] font-bold ${
-                              done ? 'text-[var(--faint)] line-through' : 'text-[var(--ink)]'
-                            }`}
-                          >
-                            {item.title}
-                          </strong>
-                          <span
-                            className={`shrink-0 rounded px-1.5 py-0.5 font-mono text-[10px] font-bold ${
-                              weekDone >= targetWk
-                                ? 'bg-[#3f7a56]/15 text-[#3f7a56] dark:text-[#7fc29b]'
-                                : 'bg-[var(--surface-2)] text-[var(--muted)]'
-                            }`}
-                          >
-                            {weekDone}/{targetWk} wk
-                          </span>
-                        </div>
-                        <span className="text-[11px] text-[var(--muted)]">
-                          {CATEGORY_SHORT_LABELS[item.category]}
-                          {item.targetMinutes ? ` · ${item.targetMinutes}m` : ''}
-                          {intendedLabels ? ` · Plan: ${intendedLabels}` : ''}
+              return (
+                <div
+                  key={item.id}
+                  className={`flex items-center justify-between gap-3 rounded-2xl border p-4 ${T.cardSubtle}`}
+                >
+                  <div className="flex min-w-0 items-center gap-3.5">
+                    <div
+                      className={`flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl border ${d.soft} ${d.border} ${d.text}`}
+                    >
+                      <DuoIcon name={domId} className="h-7 w-7" />
+                    </div>
+                    <div className="min-w-0">
+                      <div className="flex flex-wrap items-center gap-2">
+                        <span className={`truncate font-display text-sm font-extrabold sm:text-base ${T.text}`}>
+                          {item.title}
+                        </span>
+                        <span
+                          className={`rounded-lg border px-2 py-0.5 text-[11px] font-extrabold tabular-nums ${T.card} ${d.text}`}
+                        >
+                          {doneCount}/{target} wk
                         </span>
                       </div>
-                      {locked ? (
-                        <Lock className="h-3.5 w-3.5 shrink-0 text-[var(--faint)]" />
-                      ) : (
-                        <button
-                          type="button"
-                          onClick={() => handleRemoveCommitment(item.id)}
-                          aria-label={`Remove ${item.title}`}
-                          className="rounded p-1.5 text-[var(--faint)] hover:bg-red-500/10 hover:text-red-600"
-                        >
-                          <Trash2 className="h-3.5 w-3.5" />
-                        </button>
-                      )}
+                      <div className="mt-2 flex items-center gap-1.5">
+                        {Array.from({ length: target }).map((_, i) => (
+                          <span
+                            key={i}
+                            className={`h-3.5 w-3.5 rounded-full ${
+                              i < doneCount ? d.bg : isDark ? 'bg-[#262626]' : 'bg-[#E5E7EB]'
+                            }`}
+                          />
+                        ))}
+                        {dayLabels && (
+                          <span className={`ml-1 text-[11px] font-bold ${T.muted}`}>{dayLabels}</span>
+                        )}
+                      </div>
                     </div>
-                  );
-                })
-              )}
-            </div>
+                  </div>
+                  <div className="flex shrink-0 items-center gap-1.5">
+                    <button
+                      type="button"
+                      onClick={(e) => handleIncrementQuota(item, e)}
+                      className={`cursor-pointer rounded-xl px-3.5 py-2 font-display text-xs font-bold text-white transition-all active:scale-[0.98] ${d.bg} ${d.hover}`}
+                    >
+                      +1
+                    </button>
+                    {!locked && (
+                      <button
+                        type="button"
+                        aria-label="Delete"
+                        onClick={() => handleDeleteCommitment(item)}
+                        className={`h-8 w-8 cursor-pointer rounded-xl font-bold ${T.btnWhite} ${T.muted}`}
+                      >
+                        ×
+                      </button>
+                    )}
+                  </div>
+                </div>
+              );
+            })}
           </div>
 
-          <form
-            onSubmit={handleAddCommitment}
-            className="mt-4 space-y-2.5 border-t border-[var(--line)] pt-4"
-          >
-            <div className="flex flex-wrap items-center gap-2">
+          <form onSubmit={handleAddRule} className={`grid grid-cols-12 gap-2 border-t pt-3 ${T.divider}`}>
+            <input
+              type="text"
+              value={name}
+              onChange={(e) => setName(e.target.value)}
+              placeholder="New commitment..."
+              className={`col-span-12 rounded-xl border px-3 py-2 text-xs font-bold focus:outline-none sm:col-span-4 ${T.input}`}
+            />
+            <select
+              value={kind}
+              onChange={(e) => setKind(e.target.value as 'nq' | 'nn')}
+              className={`col-span-4 rounded-xl border px-2 py-2 text-xs font-bold sm:col-span-2 ${T.input}`}
+            >
+              <option value="nq">Quota</option>
+              <option value="nn">Daily</option>
+            </select>
+            <select
+              value={cat}
+              onChange={(e) => setCat(e.target.value as ActivityCategory)}
+              className={`col-span-4 rounded-xl border px-2 py-2 text-xs font-bold sm:col-span-2 ${T.input}`}
+            >
+              <option value="VOCAL">Music</option>
+              <option value="RUNNING">Run</option>
+              <option value="STRENGTH">Strength</option>
+              <option value="KARATE">Karate</option>
+              <option value="CUSTOM">Other</option>
+            </select>
+            {kind === 'nq' ? (
               <input
-                type="text"
-                value={newCommitTitle}
-                onChange={(e) => setNewCommitTitle(e.target.value)}
-                placeholder="Add commitment (e.g. 30m Vocal, Drums 3x/wk)..."
-                className="min-w-[160px] flex-1 rounded-[8px] border border-[var(--line-strong)] bg-[var(--input-bg)] px-3 py-1.5 text-[12px] text-[var(--ink)] placeholder:text-[var(--faint)] focus:border-[var(--blue)] focus:outline-none"
+                type="number"
+                min={1}
+                max={7}
+                value={quota}
+                onChange={(e) => setQuota(e.target.value)}
+                title="Sessions per week"
+                className={`col-span-2 rounded-xl border px-2 py-2 text-center text-xs font-bold tabular-nums sm:col-span-2 ${T.input}`}
               />
-              <select
-                value={newCommitTier}
-                onChange={(e) => setNewCommitTier(e.target.value as CommitmentTier)}
-                className="rounded-[8px] border border-[var(--line-strong)] bg-[var(--input-bg)] px-2 py-1.5 text-[11.5px] font-semibold text-[var(--ink)]"
-              >
-                <option value="NON_NEGOTIABLE" disabled={Boolean(discipline.activeMonk)}>
-                  Non-Negotiable
-                </option>
-                <option value="NEGOTIABLE">Negotiable</option>
-              </select>
-              <select
-                value={newCommitCategory}
-                onChange={(e) => setNewCommitCategory(e.target.value as ActivityCategory)}
-                className="rounded-[8px] border border-[var(--line-strong)] bg-[var(--input-bg)] px-2 py-1.5 text-[11.5px] text-[var(--ink)]"
-              >
-                {Object.entries(ACTIVITY_CATEGORY_LABELS).map(([k, label]) => (
-                  <option key={k} value={k}>
-                    {label}
-                  </option>
-                ))}
-              </select>
+            ) : (
               <input
                 type="number"
                 min={5}
-                max={240}
-                value={newCommitMin}
-                onChange={(e) => setNewCommitMin(e.target.value)}
-                placeholder="min"
-                className="w-16 rounded-[8px] border border-[var(--line-strong)] bg-[var(--input-bg)] px-2 py-1.5 font-mono text-[11.5px] text-[var(--ink)]"
+                max={180}
+                value={dur}
+                onChange={(e) => setDur(e.target.value)}
+                title="Minutes"
+                className={`col-span-2 rounded-xl border px-2 py-2 text-center text-xs font-bold tabular-nums sm:col-span-2 ${T.input}`}
               />
-              <button
-                type="submit"
-                className="inline-flex h-8 items-center gap-1 rounded-[8px] bg-[var(--blue)] px-3 text-[11.5px] font-bold text-[var(--blue-btn-text)]"
-              >
-                <Plus className="h-3.5 w-3.5" />
-                <span>Add</span>
-              </button>
-            </div>
-
-            {newCommitTier === 'NEGOTIABLE' && (
-              <div className="flex flex-wrap items-center gap-2 text-[11px] text-[var(--muted)]">
-                <label className="flex items-center gap-1.5 font-semibold">
-                  <span>Times/wk:</span>
-                  <input
-                    type="number"
-                    min={1}
-                    max={7}
-                    value={newCommitPerWeek}
-                    onChange={(e) => setNewCommitPerWeek(Math.max(1, Math.min(7, Number(e.target.value) || 1)))}
-                    className="w-12 rounded-[6px] border border-[var(--line-strong)] bg-[var(--input-bg)] px-1.5 py-0.5 text-center font-mono text-[11.5px] text-[var(--ink)]"
-                  />
-                </label>
-                <span className="ml-1 font-semibold">Intended days:</span>
-                <div className="flex gap-1">
-                  {ISO_WEEKDAYS.map((d) => {
-                    const active = newCommitIntendedDays.includes(d.iso);
-                    return (
-                      <button
-                        key={d.iso}
-                        type="button"
-                        onClick={() => toggleIntendedDay(d.iso)}
-                        className={`rounded px-1.5 py-0.5 font-mono text-[10px] font-bold ${
-                          active
-                            ? 'bg-[var(--blue)] text-[var(--blue-btn-text)]'
-                            : 'border border-[var(--line)] bg-[var(--bg)] text-[var(--muted)]'
-                        }`}
-                      >
-                        {d.short.slice(0, 2)}
-                      </button>
-                    );
-                  })}
-                </div>
-              </div>
             )}
+            <button
+              type="submit"
+              className={`col-span-2 cursor-pointer rounded-xl px-2 py-2 font-display text-xs font-bold ${T.btnInk}`}
+            >
+              + Add
+            </button>
           </form>
-        </section>
+        </div>
       </div>
 
-      {/* All-Activity 7-Day Weekly Planner Board */}
-      <section className="overflow-hidden rounded-[15px] border border-[var(--line)] bg-[var(--surface)]">
-        <div className="flex flex-wrap items-center justify-between gap-2 px-6 py-5">
-          <div>
-            <h2 className="text-[20px] font-bold tracking-[-0.04em] text-[var(--ink)]">
-              7-day schedule
-            </h2>
-            <p className="mt-0.5 text-[12px] text-[var(--muted)]">
-              {formatShortDate(today)} – {formatShortDate(windowEnd)} · Runs, Karate, Music, Study &amp; Intended Negotiables
-            </p>
+      {/* Visual Balance Card */}
+      <WeeklyRhythmCard
+        isDark={isDark}
+        stats={rhythmStats}
+        onOpenAnalytics={() => navigate('/analytics')}
+      />
+
+      {/* 7-Day Schedule Strip */}
+      <div className={`space-y-4 rounded-3xl border p-6 ${T.card}`}>
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <div className="flex items-center gap-2.5">
+            <h2 className={`font-display text-lg font-extrabold ${T.text}`}>7-day schedule</h2>
+            <span className={`rounded-xl border px-2.5 py-0.5 text-xs font-extrabold ${T.cardSubtle} ${T.muted}`}>
+              {fmtDate(weekDates[0]).short} – {fmtDate(weekDates[6]).short}
+            </span>
           </div>
           <button
             type="button"
-            onClick={() => {
-              setEditingWorkout(null);
-              setModalDefaultDate(today);
-              setShowRunModal(true);
-            }}
-            className="text-[12px] font-semibold text-[var(--blue)] hover:underline"
+            onClick={() => setBlockModal({ open: true, block: null, defaultCat: 'RUNNING' })}
+            className={`cursor-pointer text-xs font-extrabold ${
+              isDark ? 'text-[#60A5FA] hover:text-white' : 'text-[#2563EB] hover:underline'
+            }`}
           >
             + Add running workout
           </button>
         </div>
 
-        {loading ? (
-          <div className="border-t border-[var(--line)] py-12 text-center text-sm text-[var(--muted)]">
-            Loading 7-day planner...
-          </div>
-        ) : (
-          <div className="grid grid-cols-1 divide-y divide-[var(--line)] border-t border-[var(--line)] md:grid-cols-7 md:divide-x md:divide-y-0">
-            {rollingDates.map((date) => {
-              const iso = getIsoWeekday(date);
-              const weekdayLabel = ISO_WEEKDAYS.find((d) => d.iso === iso)?.short ?? '';
-              const workout = plannedWorkouts.find((w) => w.plan_date === date) ?? null;
-              const dayBlocks = weekOccurrences.filter((o) => o.date === date);
-              const intendedNegotiables = negotiables.filter((n) =>
-                (n.intendedDays ?? []).includes(iso)
-              );
-              const isToday = date === today;
-
-              return (
-                <div
-                  key={date}
-                  style={
-                    isToday
-                      ? { background: 'color-mix(in srgb, var(--blue) 4%, var(--surface))' }
-                      : undefined
-                  }
-                  className="flex min-h-[220px] flex-col p-3.5"
-                >
-                  <div className="flex items-center justify-between border-b border-[var(--line)] pb-2.5">
-                    <span className="text-[10.5px] font-bold uppercase tracking-[0.06em] text-[var(--muted)]">
-                      {weekdayLabel}
-                    </span>
-                    <b
-                      className={`font-mono text-[14px] ${
-                        isToday ? 'text-[var(--blue)]' : 'text-[var(--ink)]'
-                      }`}
-                    >
-                      {Number(date.slice(8))}
-                    </b>
-                  </div>
-
-                  <div className="flex flex-1 flex-col gap-2 pt-3">
-                    {workout && (
-                      <button
-                        type="button"
-                        onClick={() => {
-                          setEditingWorkout(workout);
-                          setModalDefaultDate(workout.plan_date);
-                          setShowRunModal(true);
-                        }}
-                        className="rounded-lg border border-[var(--blue)]/30 bg-[var(--blue-lite)]/65 p-2 text-left transition-colors hover:border-[var(--blue)]"
-                      >
-                        <div className="truncate text-[11.5px] font-bold text-[var(--ink)]">
-                          {workout.title}
-                        </div>
-                        <div className="font-mono text-[10px] text-[var(--blue-ink)]">
-                          {formatDistanceKm(workout.target_distance_m)}
-                        </div>
-                      </button>
-                    )}
-
-                    {dayBlocks.slice(0, 3).map((occ) => (
-                      <button
-                        key={occ.occurrenceKey}
-                        type="button"
-                        onClick={() => {
-                          const found = blocks.find((b) => b.id === occ.sourceId) ?? null;
-                          setEditingBlock(found);
-                          setModalDefaultDate(date);
-                          setShowBlockModal(true);
-                        }}
-                        className="flex items-center gap-1.5 rounded-lg border border-[var(--line)] bg-[var(--bg)] px-2 py-1.5 text-left transition-colors hover:border-[var(--line-strong)]"
-                      >
-                        <span
-                          className="h-2 w-2 shrink-0 rounded-full"
-                          style={{ backgroundColor: CATEGORY_COLORS[occ.category] }}
-                        />
-                        <span className="truncate text-[11px] font-semibold text-[var(--ink)]">
-                          {occ.title}
-                        </span>
-                      </button>
-                    ))}
-
-                    {intendedNegotiables.map((n) => (
-                      <div
-                        key={n.id}
-                        title="Intended negotiable day (flexible)"
-                        className="flex items-center gap-1.5 rounded-lg border border-dashed border-[var(--line-strong)] px-2 py-1 text-[10.5px] text-[var(--muted)]"
-                      >
-                        <span
-                          className="h-1.5 w-1.5 shrink-0 rounded-full"
-                          style={{ backgroundColor: CATEGORY_COLORS[n.category] }}
-                        />
-                        <span className="truncate">{n.title}</span>
-                      </div>
-                    ))}
-
-                    {!workout && dayBlocks.length === 0 && intendedNegotiables.length === 0 && (
-                      <span className="my-auto text-center text-[11px] text-[var(--faint)]">
-                        Open day
-                      </span>
-                    )}
-                  </div>
-
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setEditingBlock(null);
-                      setModalDefaultDate(date);
-                      setShowBlockModal(true);
-                    }}
-                    className="mt-3 w-full rounded-[7px] border border-[var(--blue)]/25 bg-[var(--blue-lite)]/55 py-1.5 text-[10.5px] font-bold text-[var(--blue-ink)] transition-colors hover:bg-[var(--blue)] hover:text-[var(--blue-btn-text)]"
+        <div className="grid grid-cols-2 gap-2.5 sm:grid-cols-4 lg:grid-cols-7">
+          {weekDates.map((iso) => {
+            const f = fmtDate(iso);
+            const evs = blocks
+              .filter((b) => occursOnDate(b, iso))
+              .sort((a, b) => (a.start_time ?? '23:59').localeCompare(b.start_time ?? '23:59'));
+            const isToday = iso === today;
+            return (
+              <div
+                key={iso}
+                className={`min-h-[150px] space-y-2 rounded-2xl border p-3 ${
+                  isToday
+                    ? isDark
+                      ? 'border-[#3B82F6] bg-[#2563EB]/15'
+                      : 'border-[#2563EB] bg-[#EFF6FF]/60'
+                    : T.cardSubtle
+                }`}
+              >
+                <div className="flex items-center justify-between">
+                  <span
+                    className={`text-[11px] font-extrabold uppercase ${
+                      isToday ? (isDark ? 'text-[#60A5FA]' : 'text-[#2563EB]') : T.muted
+                    }`}
                   >
-                    + Plan
+                    {f.dow}
+                  </span>
+                  <span className={`font-display text-sm font-extrabold tabular-nums ${T.text}`}>
+                    {f.dayNum}
+                  </span>
+                </div>
+                <div className="space-y-1.5">
+                  {evs.map((ev) => {
+                    const domId = mapCategoryToDomain(ev.category);
+                    const d = getDom(domId, isDark);
+                    return (
+                      <button
+                        key={`${ev.id}-${iso}`}
+                        type="button"
+                        onClick={() =>
+                          setBlockModal({ open: true, block: ev, defaultCat: ev.category })
+                        }
+                        className={`flex w-full cursor-pointer items-center gap-1.5 rounded-xl border px-2 py-1.5 text-left transition-all active:scale-[0.98] ${T.card}`}
+                      >
+                        <span className={`shrink-0 ${d.text}`}>
+                          <DuoIcon name={domId} className="h-4 w-4" />
+                        </span>
+                        <span className={`truncate text-[11px] font-bold ${T.text}`}>{ev.title}</span>
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      </div>
+
+      {/* Monk Sprint Lock Modal */}
+      {sprintModalOpen && (
+        <div
+          className={`fixed inset-0 z-50 flex items-center justify-center p-4 ${T.modalOverlay}`}
+          onMouseDown={(e) => {
+            if (e.target === e.currentTarget) setSprintModalOpen(false);
+          }}
+        >
+          <div className={`animate-pop w-full max-w-md space-y-5 rounded-3xl border p-6 shadow-2xl ${T.card}`}>
+            <div className="flex items-center justify-between">
+              <h3 className={`font-display text-xl font-extrabold ${T.text}`}>Lock Monk Sprint</h3>
+              <button
+                type="button"
+                onClick={() => setSprintModalOpen(false)}
+                className={`h-9 w-9 cursor-pointer rounded-xl font-extrabold ${T.btnNeutral}`}
+              >
+                ×
+              </button>
+            </div>
+            <div className="space-y-3">
+              <input
+                type="text"
+                value={sprintTitle}
+                onChange={(e) => setSprintTitle(e.target.value)}
+                placeholder="Sprint name..."
+                className={`w-full rounded-xl border px-3.5 py-2.5 font-display text-sm font-bold ${T.input}`}
+              />
+              <div className="grid grid-cols-3 gap-2">
+                {[7, 14, 21, 30, 60, 90].map((d) => (
+                  <button
+                    key={d}
+                    type="button"
+                    onClick={() => setSprintDays(d)}
+                    className={`cursor-pointer rounded-xl border py-2 font-display text-xs font-extrabold tabular-nums ${
+                      sprintDays === d ? T.btnPrimary : T.btnNeutral
+                    }`}
+                  >
+                    {d} days
                   </button>
-                </div>
-              );
-            })}
-          </div>
-        )}
-      </section>
-
-      {/* Past Monk Mode Reports */}
-      {discipline.pastMonkSessions.length > 0 && (
-        <section className="rounded-[15px] border border-[var(--line)] bg-[var(--surface)] p-6">
-          <h2 className="text-[19px] font-bold tracking-[-0.04em] text-[var(--ink)]">
-            Past Monk Mode reports
-          </h2>
-          <div className="mt-4 divide-y divide-[var(--line)] border-t border-[var(--line)]">
-            {discipline.pastMonkSessions.map((s) => {
-              const rep = evaluateMonkModeReport(s, discipline.completionsByDate, today);
-              return (
-                <div key={s.id} className="flex flex-wrap items-center justify-between gap-3 py-3.5">
-                  <div>
-                    <strong className="text-[13.5px] font-bold text-[var(--ink)]">{s.title}</strong>
-                    <div className="mt-0.5 text-[11.5px] text-[var(--muted)]">
-                      {formatShortDate(s.startDate)} → {formatShortDate(s.endedAtDate ?? s.endDate)} ·{' '}
-                      {rep.compliancePct}% compliance · {rep.brokenDays} daily break(s)
-                      {s.status === 'ENDED_EARLY' ? ' · Ended early' : ' · Completed'}
-                    </div>
-                  </div>
-                  <div className="flex items-center gap-3">
-                    <span className="font-mono text-[14px] font-bold text-[var(--blue)]">
-                      {rep.finalScore.toFixed(3)}×
-                    </span>
-                    <button
-                      type="button"
-                      onClick={() => setViewingReport(rep)}
-                      className="inline-flex h-8 items-center gap-1 rounded-[8px] border border-[var(--line)] px-3 text-[11.5px] font-semibold text-[var(--ink)] hover:bg-[var(--surface-2)]"
-                    >
-                      <Edit3 className="h-3 w-3" />
-                      <span>Report</span>
-                    </button>
-                  </div>
-                </div>
-              );
-            })}
-          </div>
-        </section>
-      )}
-
-      {/* Start Monk Mode Modal (Now includes Negotiables selection) */}
-      {showStartMonkModal && (
-        <div
-          className="fixed inset-0 z-50 flex items-center justify-center bg-black/55 p-4 backdrop-blur-[2px]"
-          onMouseDown={(e) => {
-            if (e.target === e.currentTarget) setShowStartMonkModal(false);
-          }}
-        >
-          <div className="max-h-[90vh] w-full max-w-[490px] overflow-y-auto rounded-2xl border border-[var(--line)] bg-[var(--surface)] p-6 text-[var(--ink)] shadow-2xl">
-            <div className="flex items-center justify-between border-b border-[var(--line)] pb-3.5">
-              <h2 className="text-[20px] font-bold tracking-[-0.04em]">Activate Monk Mode</h2>
+                ))}
+              </div>
+              <p className={`text-xs font-semibold ${T.muted}`}>
+                Locks {nonNegotiables.length} daily rules & {negotiables.length} weekly quotas using the 1.01/0.99 compounding score.
+              </p>
+            </div>
+            <div className="flex justify-end gap-2">
               <button
                 type="button"
-                onClick={() => setShowStartMonkModal(false)}
-                className="grid h-8 w-8 place-items-center rounded-lg text-[var(--muted)] hover:bg-[var(--surface-2)]"
+                onClick={() => setSprintModalOpen(false)}
+                className={`cursor-pointer rounded-xl px-4 py-2 text-xs font-extrabold ${T.btnNeutral}`}
               >
-                <X className="h-4 w-4" />
+                Cancel
               </button>
-            </div>
-            <form onSubmit={handleStartMonkMode} className="mt-4 space-y-4">
-              <label className="block text-[12px] font-semibold text-[var(--muted)]">
-                Sprint name
-                <input
-                  type="text"
-                  value={monkTitle}
-                  onChange={(e) => setMonkTitle(e.target.value)}
-                  className="mt-1.5 block w-full rounded-[9px] border border-[var(--line-strong)] bg-[var(--input-bg)] px-3 py-2 text-[13px] text-[var(--ink)]"
-                />
-              </label>
-
-              <div>
-                <span className="block text-[12px] font-semibold text-[var(--muted)]">
-                  Duration (days)
-                </span>
-                <div className="mt-2 flex flex-wrap gap-1.5">
-                  {MONK_PRESET_DAYS.map((d) => (
-                    <button
-                      key={d}
-                      type="button"
-                      onClick={() => {
-                        setMonkDays(d);
-                        setMonkTitle(`${d}-Day Monk Mode`);
-                      }}
-                      className={`rounded-lg border px-3 py-1.5 font-mono text-[12px] font-bold ${
-                        monkDays === d
-                          ? 'border-[var(--blue)] bg-[var(--blue-lite)] text-[var(--blue-ink)]'
-                          : 'border-[var(--line)] bg-[var(--bg)] text-[var(--muted)]'
-                      }`}
-                    >
-                      {d}d
-                    </button>
-                  ))}
-                </div>
-              </div>
-
-              <div className="rounded-xl border border-[var(--line)] bg-[var(--bg)] p-3.5 text-[12px] text-[var(--muted)]">
-                <strong className="block text-[var(--ink)]">
-                  Daily Non-Negotiables ({nonNegotiables.length}):
-                </strong>
-                {nonNegotiables.length === 0 ? (
-                  <p className="mt-1 text-[11px]">None added.</p>
-                ) : (
-                  <ul className="mt-1.5 list-disc space-y-1 pl-4">
-                    {nonNegotiables.map((c) => (
-                      <li key={c.id}>{c.title}</li>
-                    ))}
-                  </ul>
-                )}
-              </div>
-
-              {negotiables.length > 0 && (
-                <div className="rounded-xl border border-[var(--line)] bg-[var(--bg)] p-3.5 text-[12px]">
-                  <strong className="block text-[var(--ink)]">
-                    Include Flexible Weekly Negotiables:
-                  </strong>
-                  <p className="mt-0.5 text-[11px] text-[var(--muted)]">
-                    Hit the weekly count on any days to pass.
-                  </p>
-                  <div className="mt-2.5 space-y-2">
-                    {negotiables.map((n) => {
-                      const checked = selectedMonkNegIds.includes(n.id);
-                      return (
-                        <label
-                          key={n.id}
-                          className="flex cursor-pointer items-center justify-between gap-2 text-[12px] text-[var(--ink)]"
-                        >
-                          <span className="flex items-center gap-2">
-                            <input
-                              type="checkbox"
-                              checked={checked}
-                              onChange={() =>
-                                setSelectedMonkNegIds((prev) =>
-                                  prev.includes(n.id)
-                                    ? prev.filter((id) => id !== n.id)
-                                    : [...prev, n.id]
-                                )
-                              }
-                              className="h-4 w-4 accent-[var(--blue)]"
-                            />
-                            <span className="font-semibold">{n.title}</span>
-                          </span>
-                          <span className="font-mono text-[11px] text-[var(--muted)]">
-                            {n.targetPerWeek ?? 3}×/wk
-                          </span>
-                        </label>
-                      );
-                    })}
-                  </div>
-                </div>
-              )}
-
-              <div className="flex justify-end gap-2 border-t border-[var(--line)] pt-4">
-                <button
-                  type="button"
-                  onClick={() => setShowStartMonkModal(false)}
-                  className="h-9 rounded-[9px] border border-[var(--line-strong)] px-4 text-[12.5px] font-semibold"
-                >
-                  Cancel
-                </button>
-                <button
-                  type="submit"
-                  className="inline-flex h-9 items-center gap-1.5 rounded-[9px] bg-[var(--blue)] px-4 text-[12.5px] font-bold text-[var(--blue-btn-text)]"
-                >
-                  <Lock className="h-3.5 w-3.5" />
-                  <span>Lock &amp; Start</span>
-                </button>
-              </div>
-            </form>
-          </div>
-        </div>
-      )}
-
-      {/* End Monk Mode Early Modal */}
-      {showEndMonkModal && activeMonkReport && (
-        <div
-          className="fixed inset-0 z-50 flex items-center justify-center bg-black/55 p-4 backdrop-blur-[2px]"
-          onMouseDown={(e) => {
-            if (e.target === e.currentTarget) setShowEndMonkModal(false);
-          }}
-        >
-          <div className="w-full max-w-[460px] rounded-2xl border border-[var(--line)] bg-[var(--surface)] p-6 text-[var(--ink)] shadow-2xl">
-            <div className="flex items-center gap-2 text-red-600 dark:text-red-400">
-              <ShieldAlert className="h-5 w-5" />
-              <h2 className="text-[19px] font-bold">End Monk Mode early?</h2>
-            </div>
-            <p className="mt-2 text-[12.5px] leading-relaxed text-[var(--muted)]">
-              You still have <strong className="text-[var(--ink)]">{activeMonkReport.remainingDays} days</strong> left.
-              Ending early records your reason permanently in the report and applies a proportional
-              score penalty.
-            </p>
-            <form onSubmit={handleCompleteOrEndMonkEarly} className="mt-4 space-y-4">
-              <label className="block text-[12px] font-semibold text-[var(--muted)]">
-                State your honest reason *
-                <textarea
-                  rows={3}
-                  required
-                  value={earlyExitReason}
-                  onChange={(e) => setEarlyExitReason(e.target.value)}
-                  placeholder="Why are you ending Monk Mode before the target date?"
-                  className="mt-1.5 block w-full rounded-[9px] border border-[var(--line-strong)] bg-[var(--input-bg)] p-3 text-[13px] text-[var(--ink)]"
-                />
-              </label>
-              <div className="flex justify-end gap-2 border-t border-[var(--line)] pt-4">
-                <button
-                  type="button"
-                  onClick={() => setShowEndMonkModal(false)}
-                  className="h-9 rounded-[9px] border border-[var(--line-strong)] px-4 text-[12.5px] font-semibold"
-                >
-                  Stay locked in
-                </button>
-                <button
-                  type="submit"
-                  className="h-9 rounded-[9px] bg-red-600 px-4 text-[12.5px] font-bold text-white hover:bg-red-700"
-                >
-                  End with penalty
-                </button>
-              </div>
-            </form>
-          </div>
-        </div>
-      )}
-
-      {/* Monk Mode Report Modal */}
-      {viewingReport && (
-        <div
-          className="fixed inset-0 z-50 flex items-center justify-center bg-black/55 p-4 backdrop-blur-[2px]"
-          onMouseDown={(e) => {
-            if (e.target === e.currentTarget) setViewingReport(null);
-          }}
-        >
-          <div className="w-full max-w-[520px] rounded-2xl border border-[var(--line)] bg-[var(--surface)] p-6 text-[var(--ink)] shadow-2xl">
-            <div className="flex items-center justify-between border-b border-[var(--line)] pb-3.5">
-              <div>
-                <div className="text-[10px] font-bold uppercase tracking-[0.12em] text-[var(--faint)]">
-                  MONK MODE REPORT
-                </div>
-                <h2 className="mt-0.5 text-[21px] font-bold tracking-[-0.04em]">
-                  {viewingReport.title}
-                </h2>
-              </div>
               <button
                 type="button"
-                onClick={() => setViewingReport(null)}
-                className="grid h-8 w-8 place-items-center rounded-lg text-[var(--muted)] hover:bg-[var(--surface-2)]"
+                onClick={handleStartMonkSprint}
+                className={`cursor-pointer rounded-xl px-5 py-2 font-display text-xs font-bold ${T.btnPrimary}`}
               >
-                <X className="h-4 w-4" />
-              </button>
-            </div>
-
-            <div className="mt-4 grid grid-cols-3 divide-x divide-[var(--line)] rounded-xl border border-[var(--line)] bg-[var(--bg)] py-4 text-center">
-              <div>
-                <span className="text-[10px] font-bold uppercase text-[var(--muted)]">Score</span>
-                <strong className="mt-1 block font-mono text-[22px] font-bold text-[var(--blue)]">
-                  {viewingReport.finalScore.toFixed(3)}×
-                </strong>
-              </div>
-              <div>
-                <span className="text-[10px] font-bold uppercase text-[var(--muted)]">
-                  Compliance
-                </span>
-                <strong className="mt-1 block font-mono text-[22px] font-bold text-[var(--ink)]">
-                  {viewingReport.compliancePct}%
-                </strong>
-              </div>
-              <div>
-                <span className="text-[10px] font-bold uppercase text-[var(--muted)]">
-                  Weekly Quotas
-                </span>
-                <strong className="mt-1 block font-mono text-[22px] font-bold text-[var(--ink)]">
-                  {viewingReport.weeklyQuotasPassed}/
-                  {viewingReport.weeklyQuotasPassed + viewingReport.weeklyQuotasMissed}
-                </strong>
-              </div>
-            </div>
-
-            {viewingReport.earlyExitPenalty > 0 && (
-              <div className="mt-4 rounded-xl border border-red-400/40 bg-red-500/10 p-3.5 text-[12px] text-red-700 dark:text-red-300">
-                <strong>Early Exit Penalty: −{viewingReport.earlyExitPenalty.toFixed(3)}×</strong>{' '}
-                ({viewingReport.remainingDays} of {viewingReport.plannedDays} days left).
-                {viewingReport.earlyExitReason && (
-                  <p className="mt-1 italic">&ldquo;{viewingReport.earlyExitReason}&rdquo;</p>
-                )}
-              </div>
-            )}
-
-            <div className="mt-5 flex justify-end">
-              <button
-                type="button"
-                onClick={() => setViewingReport(null)}
-                className="h-9 rounded-[9px] bg-[var(--blue)] px-4 text-[12.5px] font-bold text-[var(--blue-btn-text)]"
-              >
-                Close report
+                Start Sprint
               </button>
             </div>
           </div>
         </div>
       )}
 
-      {/* Plan Any Activity Modal */}
-      {showBlockModal && user && (
-        <ScheduleBlockModal
-          initialBlock={editingBlock}
-          defaultDate={modalDefaultDate}
-          onClose={() => {
-            setShowBlockModal(false);
-            setEditingBlock(null);
-          }}
-          onSave={async (draft) => {
-            if (editingBlock) {
-              await updateScheduleBlock(user.id, editingBlock.id, draft);
-            } else {
-              await createScheduleBlock(user.id, draft);
-            }
-            await loadData();
-          }}
-        />
-      )}
-
-      {/* Plan / Edit Running Workout Modal */}
-      {showRunModal && user && (
-        <PlannedWorkoutModal
-          initialWorkout={editingWorkout}
-          defaultDate={modalDefaultDate}
-          activePhase={activePhase}
-          paceZones={paceZones}
-          onClose={() => {
-            setShowRunModal(false);
-            setEditingWorkout(null);
-          }}
-          onSave={handleSaveManualWorkout}
+      {blockModal.open && (
+        <V2BlockModal
+          isDark={isDark}
+          block={blockModal.block}
+          defaultDate={today}
+          defaultCategory={blockModal.defaultCat}
+          saving={savingBlock}
+          onClose={() => setBlockModal({ open: false, block: null, defaultCat: 'RUNNING' })}
+          onSave={handleSaveBlock}
+          onDelete={handleDeleteBlock}
         />
       )}
     </div>

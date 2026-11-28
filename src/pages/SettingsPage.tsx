@@ -1,355 +1,389 @@
-﻿import { useCallback, useEffect, useMemo, useState, type FormEvent } from 'react';
-import { Check, Info } from 'lucide-react';
-import { getLocalDateString } from '@/lib/datetime';
+﻿import { useEffect, useMemo, useState } from 'react';
+import { DuoIcon } from '@/design-system/DuoIcon';
+import { getDom, getV2Theme } from '@/design-system/v2Theme';
+import { useFeedback } from '@/components/feedback/FeedbackContext';
 import { supabase } from '@/lib/supabase';
 import { useAuth } from '@/modules/auth/AuthContext';
-import { listScheduleBlocks, listScheduleCompletions } from '@/modules/calendar/repository';
+import { useTheme } from '@/modules/theme/ThemeContext';
+import { parseDurationToSeconds } from '@/modules/running/calculations';
+import { listRunningSessions } from '@/modules/running/repository';
+import { listScheduleBlocks } from '@/modules/calendar/repository';
+import { listHabitLogs } from '@/modules/habits/repository';
 import {
-  DEFAULT_REMINDER_PREFERENCES,
-  getCurrentLocalMinutes,
-  getUpcomingRemindersForToday,
-  type ReminderPreferences,
-} from '@/modules/reminders/reminderEngine';
+  loadRitualConfig,
+  saveRitualConfig,
+  type RitualConfig,
+} from '@/modules/rituals/ritualStorage';
 import {
-  getBrowserNotificationPermission,
-  loadFiredReminderKeys,
   loadReminderPreferences,
-  playGentleChime,
   saveReminderPreferences,
 } from '@/modules/reminders/storage';
-import { ReminderPreferencesPanel } from '@/modules/reminders/ReminderPreferencesPanel';
-import type { ScheduleBlock, ScheduleCompletion } from '@/types/domain';
+import { TRAINING_PHASE_LABELS, type TrainingPhase } from '@/types/domain';
+
+const PHASES: TrainingPhase[] = [
+  'REBUILDING',
+  'BUILDING_CONSISTENCY',
+  'PERFORMANCE_DEVELOPMENT',
+  'GOAL_SPECIFIC_5K',
+];
+
+function fmtSecMMSS(sec: number | null | undefined, fallback: string): string {
+  if (!sec || sec <= 0) return fallback;
+  const m = Math.floor(sec / 60);
+  const s = Math.round(sec % 60);
+  return `${m}:${String(s).padStart(2, '0')}`;
+}
 
 export function SettingsPage() {
-  const { user, profile, refreshProfile } = useAuth();
-  const tz = profile?.timezone ?? 'Asia/Colombo';
-  const today = getLocalDateString(new Date(), tz);
+  const { user, profile, refreshProfile, signOut } = useAuth();
+  const { resolvedTheme, toggleTheme } = useTheme();
+  const { pushToast } = useFeedback();
 
-  const [displayName, setDisplayName] = useState('');
-  const [timezone, setTimezone] = useState('Asia/Colombo');
-  const [aiEnabled, setAiEnabled] = useState(false);
-  const [preferredModel, setPreferredModel] = useState('gemini-4-hydrogen');
-  const [consentAck, setConsentAck] = useState(false);
-  const [shareNotes, setShareNotes] = useState(true);
-  const [shareRecovery, setShareRecovery] = useState(true);
-  const [shareKarate, setShareKarate] = useState(true);
-  const [shareCommitments, setShareCommitments] = useState(true);
+  const isDark = resolvedTheme === 'dark';
+  const T = useMemo(() => getV2Theme(isDark), [isDark]);
+  const runDom = getDom('running', isDark);
+  const karateDom = getDom('karate', isDark);
+  const sleepDom = getDom('sleep', isDark);
+
+  const [displayName, setDisplayName] = useState(profile?.display_name ?? '');
+  const [phase, setPhase] = useState<TrainingPhase>(profile?.current_phase ?? 'REBUILDING');
+  const [firstFiveKTarget, setFirstFiveKTarget] = useState(
+    fmtSecMMSS(profile?.first_major_5k_goal_s, '19:59')
+  );
+  const [longTermFiveKTarget, setLongTermFiveKTarget] = useState(
+    fmtSecMMSS(profile?.long_term_5k_goal_s, '17:30')
+  );
+  const [timezone, setTimezone] = useState(profile?.timezone ?? 'Asia/Colombo');
+  const [ritualConfig, setRitualConfig] = useState<RitualConfig>(() =>
+    loadRitualConfig(user?.id ?? 'guest')
+  );
+  const [remindersEnabled, setRemindersEnabled] = useState(true);
   const [saving, setSaving] = useState(false);
-  const [message, setMessage] = useState<string | null>(null);
-  const [error, setError] = useState<string | null>(null);
-
-  // Embedded Session Reminder state
-  const [reminderPrefs, setReminderPrefs] = useState<ReminderPreferences>(
-    DEFAULT_REMINDER_PREFERENCES
-  );
-  const [permission, setPermission] = useState<NotificationPermission | 'unsupported'>(() =>
-    getBrowserNotificationPermission()
-  );
-  const [blocks, setBlocks] = useState<ScheduleBlock[]>([]);
-  const [completions, setCompletions] = useState<ScheduleCompletion[]>([]);
 
   useEffect(() => {
-    if (!profile) return;
-    setDisplayName(profile.display_name ?? '');
-    setTimezone(profile.timezone);
-    setAiEnabled(profile.ai_enabled);
-    setPreferredModel(profile.ai_preferred_model);
-    setConsentAck(profile.ai_privacy_consent_acknowledged);
-    setShareNotes(profile.ai_share_notes);
-    setShareRecovery(profile.ai_share_recovery);
-    setShareKarate(profile.ai_share_karate);
-    setShareCommitments(profile.ai_share_commitments);
+    if (profile) {
+      setDisplayName(profile.display_name ?? '');
+      setPhase(profile.current_phase);
+      setFirstFiveKTarget(fmtSecMMSS(profile.first_major_5k_goal_s, '19:59'));
+      setLongTermFiveKTarget(fmtSecMMSS(profile.long_term_5k_goal_s, '17:30'));
+      setTimezone(profile.timezone || 'Asia/Colombo');
+    }
   }, [profile]);
 
-  const loadReminderContext = useCallback(async () => {
-    if (!user) return;
-    setReminderPrefs(loadReminderPreferences(user.id));
-    setPermission(getBrowserNotificationPermission());
-    try {
-      const [bRows, cRows] = await Promise.all([
-        listScheduleBlocks(user.id),
-        listScheduleCompletions(user.id, today, today).catch(() => [] as ScheduleCompletion[]),
-      ]);
-      setBlocks(bRows);
-      setCompletions(cRows);
-    } catch {
-      // Ignore background fetch errors
-    }
-  }, [user, today]);
-
   useEffect(() => {
-    void loadReminderContext();
-  }, [loadReminderContext]);
-
-  const upcomingPreview = useMemo(() => {
-    if (!user) return [];
-    return getUpcomingRemindersForToday({
-      todayIso: today,
-      nowMinutes: getCurrentLocalMinutes(new Date(), tz),
-      blocks,
-      completions,
-      prefs: reminderPrefs,
-      firedKeys: loadFiredReminderKeys(user.id, today),
-    });
-  }, [user, today, tz, blocks, completions, reminderPrefs]);
-
-  function handleUpdateReminderPrefs(next: ReminderPreferences) {
-    if (!user) return;
-    setReminderPrefs(next);
-    saveReminderPreferences(user.id, next);
-  }
-
-  async function handleRequestBrowserPermission() {
-    if (typeof window === 'undefined' || !('Notification' in window)) {
-      setPermission('unsupported');
-      return;
+    if (user) {
+      setRitualConfig(loadRitualConfig(user.id));
+      const prefs = loadReminderPreferences(user.id);
+      setRemindersEnabled(prefs.enabled);
     }
-    const result = await window.Notification.requestPermission();
-    setPermission(result);
-    if (result === 'granted' && user) {
-      const next = { ...reminderPrefs, browserNotifications: true };
-      setReminderPrefs(next);
-      saveReminderPreferences(user.id, next);
-    }
-  }
+  }, [user]);
 
-  function handleSendTestAlert() {
-    if (reminderPrefs.soundEnabled) playGentleChime();
-    if (
-      reminderPrefs.browserNotifications &&
-      typeof window !== 'undefined' &&
-      'Notification' in window &&
-      window.Notification.permission === 'granted'
-    ) {
-      new window.Notification('Stride Reminder Test', {
-        body: `Alerts are set for ${reminderPrefs.leadMinutes} min before timed sessions.`,
-      });
-    }
-    setMessage('Test reminder alert dispatched.');
-  }
-
-  async function handleSave(e: FormEvent) {
-    e.preventDefault();
-    if (!supabase || !user) return;
-    if (aiEnabled && !consentAck) {
-      setError('Please acknowledge the free-tier Gemini privacy disclosure before enabling AI.');
-      return;
-    }
-
+  async function saveProfilePatch(patch: Record<string, unknown>, toastLabel: string) {
+    if (!user || !supabase) return;
     setSaving(true);
-    setError(null);
-    setMessage(null);
+    try {
+      const { error } = await supabase
+        .from('user_profiles')
+        .update(patch)
+        .eq('user_id', user.id);
+      if (error) throw error;
+      await refreshProfile();
+      pushToast(toastLabel, '#2563EB');
+    } catch {
+      pushToast('Failed to update settings', '#E11D48');
+    } finally {
+      setSaving(false);
+    }
+  }
 
-    const { error: updateError } = await supabase
-      .from('user_profiles')
-      .update({
-        display_name: displayName.trim() || null,
-        timezone: timezone.trim() || 'Asia/Colombo',
-        ai_enabled: aiEnabled,
-        ai_preferred_model: preferredModel.trim() || 'gemini-4-hydrogen',
-        ai_privacy_consent_acknowledged: consentAck,
-        ai_share_notes: shareNotes,
-        ai_share_recovery: shareRecovery,
-        ai_share_karate: shareKarate,
-        ai_share_commitments: shareCommitments,
-      })
-      .eq('user_id', user.id);
+  function updateRitualLabel(period: 'morning' | 'evening', idx: 0 | 1 | 2, value: string) {
+    setRitualConfig((prev) => {
+      const copy = [...prev[period]] as RitualConfig['morning'];
+      copy[idx] = { ...copy[idx], label: value };
+      return { ...prev, [period]: copy };
+    });
+  }
 
-    setSaving(false);
-
-    if (updateError) {
-      setError(updateError.message);
+  async function handleSaveAll() {
+    if (!user) return;
+    const firstSec = parseDurationToSeconds(firstFiveKTarget);
+    const longSec = parseDurationToSeconds(longTermFiveKTarget);
+    if (!firstSec || firstSec <= 0 || !longSec || longSec <= 0) {
+      pushToast('Enter 5K goals as MM:SS (e.g. 19:59 and 17:30)', '#EA580C');
       return;
     }
 
-    await refreshProfile();
-    setMessage('Settings saved to Supabase.');
+    const cleanedRituals: RitualConfig = {
+      morning: [
+        { ...ritualConfig.morning[0], label: ritualConfig.morning[0].label.trim() || 'Hydrate' },
+        { ...ritualConfig.morning[1], label: ritualConfig.morning[1].label.trim() || 'Sunlight' },
+        { ...ritualConfig.morning[2], label: ritualConfig.morning[2].label.trim() || 'Top Block' },
+      ],
+      evening: [
+        { ...ritualConfig.evening[0], label: ritualConfig.evening[0].label.trim() || 'Prep Gear' },
+        { ...ritualConfig.evening[1], label: ritualConfig.evening[1].label.trim() || 'Phone Out' },
+        { ...ritualConfig.evening[2], label: ritualConfig.evening[2].label.trim() || 'Lock Start' },
+      ],
+    };
+
+    saveRitualConfig(user.id, cleanedRituals);
+    setRitualConfig(cleanedRituals);
+
+    await saveProfilePatch(
+      {
+        display_name: displayName.trim() || null,
+        first_major_5k_goal_s: firstSec,
+        long_term_5k_goal_s: longSec,
+        timezone: timezone.trim() || 'Asia/Colombo',
+      },
+      'Settings & goals saved'
+    );
   }
 
-  const inputClass =
-    'mt-2 block w-full min-h-[42px] rounded-[9px] border border-[var(--line-strong)] bg-[var(--input-bg)] px-3 py-2 text-[13px] font-medium text-[var(--ink)] focus:border-[var(--blue)] focus:outline-none';
+  function handleToggleReminders() {
+    if (!user) return;
+    const current = loadReminderPreferences(user.id);
+    const next = { ...current, enabled: !remindersEnabled };
+    saveReminderPreferences(user.id, next);
+    setRemindersEnabled(next.enabled);
+    pushToast(next.enabled ? 'Reminders enabled' : 'Reminders paused', '#2563EB');
+  }
+
+  async function handleExportBackup() {
+    if (!user) return;
+    try {
+      const [blocks, runs, habits] = await Promise.all([
+        listScheduleBlocks(user.id),
+        listRunningSessions(user.id),
+        listHabitLogs(user.id),
+      ]);
+      const payload = {
+        exportedAt: new Date().toISOString(),
+        profile,
+        ritualConfig,
+        blocks,
+        runs,
+        habits,
+      };
+      const blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = 'stride-backup.json';
+      a.click();
+      URL.revokeObjectURL(url);
+      pushToast('Exported stride-backup.json', '#2563EB');
+    } catch {
+      pushToast('Export failed', '#E11D48');
+    }
+  }
 
   return (
-    <div className="space-y-7 pb-6">
-      {/* Studio Header (Common Default Stride Blue) */}
-      <header>
-        <h1 className="text-[34px] font-bold leading-[1.08] tracking-[-0.055em] text-[var(--ink)] sm:text-[42px]">
-          Your space, <em className="not-italic text-[var(--blue)]">your rules.</em>
-        </h1>
-      </header>
+    <div className="mx-auto max-w-2xl animate-pop space-y-6">
+      <h1 className={`font-display text-3xl font-extrabold tracking-tight ${T.text}`}>Settings</h1>
 
-      {error && (
-        <div className="rounded-xl border border-red-400/40 bg-red-500/10 px-4 py-3 text-xs font-semibold text-red-700 dark:text-red-300">
-          {error}
-        </div>
-      )}
-      {message && (
-        <div className="rounded-xl border border-[var(--blue)]/30 bg-[var(--blue-lite)] px-4 py-3 text-xs font-semibold text-[var(--blue-ink)]">
-          {message}
-        </div>
-      )}
-
-      {/* Studio 2-Column Layout */}
-      <form
-        onSubmit={(e) => void handleSave(e)}
-        className="grid items-start gap-5 lg:grid-cols-[minmax(0,0.82fr)_minmax(0,1.18fr)]"
-      >
-        {/* Left Column: Profile + Reminders */}
-        <div className="space-y-5">
-          <section className="rounded-[15px] border border-[var(--line)] bg-[var(--surface)] p-6 sm:p-7">
-            <h2 className="text-[20px] font-bold tracking-[-0.04em] text-[var(--ink)]">
-              Personal preferences
-            </h2>
-            
-
-            <div className="mt-5 space-y-4">
-              <label className="block text-[12px] font-semibold text-[var(--ink)]">
-                Display name
-                <input
-                  id="displayName"
-                  type="text"
-                  value={displayName}
-                  onChange={(e) => setDisplayName(e.target.value)}
-                  className={inputClass}
-                />
-              </label>
-
-              <label className="block text-[12px] font-semibold text-[var(--ink)]">
-                Timezone
-                <input
-                  id="timezone"
-                  type="text"
-                  value={timezone}
-                  onChange={(e) => setTimezone(e.target.value)}
-                  className={`${inputClass} font-mono`}
-                />
-              </label>
-            </div>
-
-            <p className="mt-5 text-[12px] leading-relaxed text-[var(--muted)]">
-              Calendar weeks begin on Monday and sync across Overview, Analytics, and Reviews.
-            </p>
-          </section>
-
-          <section className="rounded-[15px] border border-[var(--line)] bg-[var(--surface)] p-6 sm:p-7">
-            <h2 className="text-[20px] font-bold tracking-[-0.04em] text-[var(--ink)]">
-              Session reminders
-            </h2>
-            
-            <ReminderPreferencesPanel
-              prefs={reminderPrefs}
-              permission={permission}
-              upcoming={upcomingPreview}
-              onUpdatePrefs={handleUpdateReminderPrefs}
-              onRequestBrowserPermission={handleRequestBrowserPermission}
-              onSendTestAlert={handleSendTestAlert}
-            />
-          </section>
-        </div>
-
-        {/* Right Column: AI & Privacy */}
-        <section className="rounded-[15px] border border-[var(--line)] bg-[var(--surface)] p-6 sm:p-7">
-          <div className="flex items-start justify-between gap-3">
+      <div className={`space-y-6 rounded-3xl border p-6 ${T.card}`}>
+        {/* Appearance */}
+        <div className={`flex items-center justify-between rounded-2xl border p-4 ${T.cardSubtle}`}>
+          <div className="flex items-center gap-3">
+            <span
+              className={`flex h-10 w-10 items-center justify-center rounded-xl ${
+                isDark ? 'bg-[#FBBF24]/15 text-[#FBBF24]' : 'bg-[#EEF2FF] text-[#4F46E5]'
+              }`}
+            >
+              <DuoIcon name={isDark ? 'moon' : 'sun'} className="h-5 w-5" />
+            </span>
             <div>
-              <h2 className="text-[20px] font-bold tracking-[-0.04em] text-[var(--ink)]">
-                AI &amp; privacy
-              </h2>
-              <p className="mt-1 text-[12px] text-[var(--muted)]">
-                AI is optional. Your logs, calendar, and plans remain fully usable without it.
-              </p>
+              <div className={`font-display text-sm font-extrabold ${T.text}`}>Appearance</div>
+              <span className={`text-xs font-bold ${T.muted}`}>
+                {isDark ? 'Dark Mode' : 'Light Mode'}
+              </span>
             </div>
-            <span className="rounded-[6px] bg-[var(--surface-2)] px-2.5 py-1 font-mono text-[10px] font-semibold text-[var(--muted)]">
-              {aiEnabled ? 'ENABLED' : 'OPTIONAL'}
-            </span>
           </div>
+          <button
+            type="button"
+            onClick={toggleTheme}
+            className={`cursor-pointer rounded-xl px-4 py-2 font-display text-xs font-bold ${T.btnPrimary}`}
+          >
+            Switch to {isDark ? 'Light' : 'Dark'}
+          </button>
+        </div>
 
-          <div className="mt-5 flex items-start gap-3 rounded-[10px] border border-[var(--line)] bg-[var(--surface-2)] p-4 text-[12px] leading-relaxed text-[var(--muted)]">
-            <Info className="mt-0.5 h-4 w-4 shrink-0 text-[#bc9346]" />
-            <span>
-              Google Gemini Developer API free-tier terms may permit submitted prompts and
-              screenshots to be used for product improvement. Requests never silently route to paid
-              endpoints.
-            </span>
+        {/* Training Phase */}
+        <div className="space-y-2.5">
+          <span className={`text-xs font-extrabold uppercase tracking-wider ${T.muted}`}>
+            Training Phase
+          </span>
+          <div className="grid grid-cols-1 gap-2.5 sm:grid-cols-2">
+            {PHASES.map((p) => (
+              <button
+                key={p}
+                type="button"
+                disabled={saving}
+                onClick={() => {
+                  setPhase(p);
+                  void saveProfilePatch({ current_phase: p }, TRAINING_PHASE_LABELS[p]);
+                }}
+                className={`cursor-pointer rounded-2xl border p-3.5 text-left font-display text-xs font-extrabold transition-all active:scale-[0.98] ${
+                  phase === p
+                    ? `${runDom.soft} ${runDom.border} ${runDom.text}`
+                    : `${T.cardSubtle} ${T.text}`
+                }`}
+              >
+                {TRAINING_PHASE_LABELS[p]}
+              </button>
+            ))}
           </div>
+        </div>
 
-          <div className="mt-5 space-y-3.5">
-            <label className="flex cursor-pointer items-start gap-2.5 text-[12.5px] leading-relaxed text-[var(--ink)]">
+        {/* Running 5K Goals */}
+        <div className="space-y-2.5">
+          <span className={`text-xs font-extrabold uppercase tracking-wider ${runDom.text}`}>
+            Running Goals (Shown on Overview & Running)
+          </span>
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+            <div className={`space-y-1.5 rounded-2xl border p-4 ${T.cardSubtle}`}>
+              <span className={`block text-[11px] font-extrabold uppercase ${T.muted}`}>
+                First 5K Milestone (MM:SS)
+              </span>
               <input
-                type="checkbox"
-                checked={consentAck}
-                onChange={(e) => setConsentAck(e.target.checked)}
-                className="mt-1 h-4 w-4 shrink-0 accent-[var(--blue)]"
+                type="text"
+                value={firstFiveKTarget}
+                onChange={(e) => setFirstFiveKTarget(e.target.value)}
+                placeholder="19:59"
+                className={`w-full rounded-xl border px-3 py-2 font-display text-base font-extrabold tabular-nums focus:outline-none ${T.input}`}
               />
-              <span>I understand and acknowledge the provider data-handling notice.</span>
-            </label>
-
-            <label className="flex cursor-pointer items-start gap-2.5 text-[12.5px] font-semibold leading-relaxed text-[var(--ink)]">
-              <input
-                type="checkbox"
-                checked={aiEnabled}
-                onChange={(e) => setAiEnabled(e.target.checked)}
-                className="mt-1 h-4 w-4 shrink-0 accent-[var(--blue)]"
-              />
-              <span>Enable Gemini AI features (screenshot extraction, run analysis, AI coach)</span>
-            </label>
-          </div>
-
-          <label className="mt-6 block text-[12px] font-semibold text-[var(--ink)]">
-            Preferred Gemini model
-            <input
-              id="preferredModel"
-              type="text"
-              value={preferredModel}
-              onChange={(e) => setPreferredModel(e.target.value)}
-              className={`${inputClass} font-mono`}
-            />
-            <small className="mt-1.5 block text-[11px] font-normal text-[var(--muted)]">
-              Server-side model preference used by your AI Coach and weekly review endpoints.
-            </small>
-          </label>
-
-          <div className="mt-6 border-t border-[var(--line)] pt-5">
-            <div className="text-[10px] font-bold uppercase tracking-[0.13em] text-[var(--faint)]">
-              INFORMATION YOU ALLOW THE AI TO SEE
             </div>
-            <div className="mt-3 grid gap-2.5 sm:grid-cols-2">
-              {[
-                { label: 'Session notes', checked: shareNotes, set: setShareNotes },
-                { label: 'Readiness check-ins', checked: shareRecovery, set: setShareRecovery },
-                { label: 'Karate sessions', checked: shareKarate, set: setShareKarate },
-                { label: 'Schedule commitments', checked: shareCommitments, set: setShareCommitments },
-              ].map((item) => (
-                <label
-                  key={item.label}
-                  className="flex cursor-pointer items-center gap-2.5 text-[12.5px] text-[var(--ink)]"
+
+            <div className={`space-y-1.5 rounded-2xl border p-4 ${T.cardSubtle}`}>
+              <span className={`block text-[11px] font-extrabold uppercase ${T.muted}`}>
+                Long-Term 5K Goal (MM:SS)
+              </span>
+              <input
+                type="text"
+                value={longTermFiveKTarget}
+                onChange={(e) => setLongTermFiveKTarget(e.target.value)}
+                placeholder="17:30"
+                className={`w-full rounded-xl border px-3 py-2 font-display text-base font-extrabold tabular-nums focus:outline-none ${T.input}`}
+              />
+            </div>
+          </div>
+        </div>
+
+        {/* Morning Launch & Evening Shutdown Rituals */}
+        <div className="space-y-4">
+          <div className="space-y-2">
+            <span className={`text-xs font-extrabold uppercase tracking-wider ${karateDom.text}`}>
+              Morning Launch (3 items)
+            </span>
+            <div className="grid grid-cols-1 gap-2.5 sm:grid-cols-3">
+              {([0, 1, 2] as const).map((idx) => (
+                <div
+                  key={ritualConfig.morning[idx].id}
+                  className={`flex items-center gap-2 rounded-2xl border p-2.5 ${T.cardSubtle}`}
                 >
+                  <span className={`shrink-0 ${karateDom.text}`}>
+                    <DuoIcon name={ritualConfig.morning[idx].icon} className="h-5 w-5" />
+                  </span>
                   <input
-                    type="checkbox"
-                    checked={item.checked}
-                    onChange={(e) => item.set(e.target.checked)}
-                    className="h-4 w-4 shrink-0 accent-[var(--blue)]"
+                    type="text"
+                    value={ritualConfig.morning[idx].label}
+                    onChange={(e) => updateRitualLabel('morning', idx, e.target.value)}
+                    className={`w-full rounded-lg border px-2 py-1.5 font-display text-xs font-bold focus:outline-none ${T.input}`}
                   />
-                  <span>{item.label}</span>
-                </label>
+                </div>
               ))}
             </div>
           </div>
 
-          <div className="mt-6 flex flex-wrap items-center justify-between gap-3 border-t border-[var(--line)] pt-5">
-            <small className="text-[11px] text-[var(--muted)]">
-              API keys remain server-side only.
-            </small>
+          <div className="space-y-2">
+            <span className={`text-xs font-extrabold uppercase tracking-wider ${sleepDom.text}`}>
+              Evening Shutdown (3 items)
+            </span>
+            <div className="grid grid-cols-1 gap-2.5 sm:grid-cols-3">
+              {([0, 1, 2] as const).map((idx) => (
+                <div
+                  key={ritualConfig.evening[idx].id}
+                  className={`flex items-center gap-2 rounded-2xl border p-2.5 ${T.cardSubtle}`}
+                >
+                  <span className={`shrink-0 ${sleepDom.text}`}>
+                    <DuoIcon name={ritualConfig.evening[idx].icon} className="h-5 w-5" />
+                  </span>
+                  <input
+                    type="text"
+                    value={ritualConfig.evening[idx].label}
+                    onChange={(e) => updateRitualLabel('evening', idx, e.target.value)}
+                    className={`w-full rounded-lg border px-2 py-1.5 font-display text-xs font-bold focus:outline-none ${T.input}`}
+                  />
+                </div>
+              ))}
+            </div>
+          </div>
+        </div>
+
+        {/* Profile & Timezone */}
+        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+          <div className={`space-y-1.5 rounded-2xl border p-4 ${T.cardSubtle}`}>
+            <span className={`block text-[11px] font-extrabold uppercase ${T.muted}`}>Name</span>
+            <input
+              type="text"
+              value={displayName}
+              onChange={(e) => setDisplayName(e.target.value)}
+              placeholder="Athlete"
+              className={`w-full rounded-xl border px-3 py-1.5 font-display text-sm font-bold focus:outline-none ${T.input}`}
+            />
+          </div>
+
+          <div className={`space-y-1.5 rounded-2xl border p-4 ${T.cardSubtle}`}>
+            <span className={`block text-[11px] font-extrabold uppercase ${T.muted}`}>Timezone</span>
+            <input
+              type="text"
+              value={timezone}
+              onChange={(e) => setTimezone(e.target.value)}
+              className={`w-full rounded-xl border px-3 py-1.5 text-xs font-bold focus:outline-none ${T.input}`}
+            />
+          </div>
+        </div>
+
+        <div className="flex items-center justify-between gap-2">
+          <button
+            type="button"
+            onClick={handleToggleReminders}
+            className={`cursor-pointer rounded-xl px-4 py-2 text-xs font-extrabold ${T.btnNeutral}`}
+          >
+            Reminders: {remindersEnabled ? 'On' : 'Off'}
+          </button>
+          <button
+            type="button"
+            disabled={saving}
+            onClick={() => void handleSaveAll()}
+            className={`cursor-pointer rounded-xl px-5 py-2.5 font-display text-xs font-bold disabled:opacity-50 ${T.btnSuccess}`}
+          >
+            {saving ? 'Saving...' : 'Save Changes'}
+          </button>
+        </div>
+
+        {/* Export / Sign Out */}
+        <div className={`flex flex-wrap items-center justify-between gap-2 border-t pt-4 ${T.divider}`}>
+          <span className={`text-xs font-bold ${T.muted}`}>Synced with Supabase</span>
+          <div className="flex items-center gap-2">
             <button
-              type="submit"
-              disabled={saving}
-              className="inline-flex h-[41px] items-center gap-2 rounded-[9px] bg-[var(--blue)] px-5 text-[12.5px] font-bold text-[var(--blue-btn-text)] transition-opacity hover:opacity-90 disabled:opacity-50"
+              type="button"
+              onClick={() => void handleExportBackup()}
+              className={`cursor-pointer rounded-xl px-4 py-2 font-display text-xs font-bold ${T.btnNeutral}`}
             >
-              <Check className="h-4 w-4 stroke-[2.5]" />
-              <span>{saving ? 'Saving...' : 'Save settings'}</span>
+              Export JSON
+            </button>
+            <button
+              type="button"
+              onClick={() => void signOut()}
+              className={`cursor-pointer rounded-xl px-4 py-2 font-display text-xs font-bold ${T.btnDangerSoft}`}
+            >
+              Sign Out
             </button>
           </div>
-        </section>
-      </form>
+        </div>
+      </div>
     </div>
   );
 }
